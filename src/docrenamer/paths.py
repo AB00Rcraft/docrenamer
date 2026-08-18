@@ -114,6 +114,14 @@ class AppPaths:
         return self.root / TEMP_DIRNAME
 
     @property
+    def assets_dir(self) -> Path:
+        """Каталог ресурсов оформления."""
+        external = self.root / "assets"
+        if external.is_dir():
+            return external
+        return bundled_root() / "assets"
+
+    @property
     def tessdata_dir(self) -> Path:
         return self.runtime_dir / "tesseract" / "tessdata"
 

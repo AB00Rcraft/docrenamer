@@ -7,7 +7,7 @@
 ; Сборка: ISCC.exe installer\DocRenamer.iss
 
 #define AppName "DocRenamer Offline"
-#define AppVersion "1.0.5"
+#define AppVersion "1.0.6"
 #define AppPublisher "DocRenamer"
 #define AppExeName "DocRenamer.exe"
 
@@ -29,6 +29,7 @@ OutputBaseFilename=DocRenamer-Setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\assets\icon.ico
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExeName}
 AppComments=Локальное переименование документов по содержимому. Работает без Интернета.

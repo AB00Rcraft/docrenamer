@@ -29,6 +29,8 @@ PROJECT_ROOT = Path(SPECPATH)
 # отдельно: они не должны попадать в анализ зависимостей PyInstaller.
 datas = [
     (str(PROJECT_ROOT / "config" / "config.json"), "config"),
+    (str(PROJECT_ROOT / "assets" / "icon.ico"), "assets"),
+    (str(PROJECT_ROOT / "assets" / "logo.png"), "assets"),
     (str(PROJECT_ROOT / "config" / "document_types.json"), "config"),
     (str(PROJECT_ROOT / "README.md"), "."),
     (str(PROJECT_ROOT / "THIRD_PARTY_NOTICES.md"), "."),
@@ -153,8 +155,12 @@ pyz = PYZ(a.pure)
 # console=False: приложение оконное. Вывод CLI при этом остаётся доступным,
 # если запускать из cmd.exe с перенаправлением, а обычный двойной щелчок не
 # открывает лишнее чёрное окно.
+#: Фирменный знак: лист документа с ярлыком имени (assets/make_logo.py).
+ICON_PATH = PROJECT_ROOT / "assets" / "icon.ico"
+
 common = {
     "name": "DocRenamer",
+    "icon": str(ICON_PATH) if ICON_PATH.is_file() else None,
     "debug": False,
     "bootloader_ignore_signals": False,
     "strip": False,

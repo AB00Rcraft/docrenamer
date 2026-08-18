@@ -188,6 +188,7 @@ class DocRenamerGUI:
         self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.root.minsize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         self.root.configure(bg=COLORS["bg"])
+        self._set_window_icon()
         self._build_style()
         self._build_widgets()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -200,6 +201,25 @@ class DocRenamerGUI:
             self.root.after(1500, self._check_updates)
 
     # --- построение интерфейса --------------------------------------------
+
+    def _set_window_icon(self) -> None:
+        """Поставить фирменный значок окна.
+
+        В Windows используется .ico — он же показывается на панели задач;
+        в остальных системах — PNG. Отсутствие файла не должно мешать работе.
+        """
+        assets = self.paths.assets_dir
+        try:
+            icon = assets / "icon.ico"
+            if os.name == "nt" and icon.is_file():
+                self.root.iconbitmap(default=str(icon))
+                return
+            png = assets / "logo.png"
+            if png.is_file():
+                self._icon_image = tk.PhotoImage(file=str(png))
+                self.root.iconphoto(True, self._icon_image)
+        except tk.TclError:
+            return
 
     def _build_style(self) -> None:
         """Единая типографика и палитра.

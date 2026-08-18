@@ -82,6 +82,7 @@ jobs:
           python -m PyInstaller
           --noconfirm --onefile --console
           --name DocRenamerUpdate
+          --icon assets/icon.ico
           --paths src
           src/docrenamer_updater/__main__.py
           --distpath dist/updater --workpath build/updater --specpath build

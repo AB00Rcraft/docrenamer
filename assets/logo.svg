@@ -1,0 +1,21 @@
+<!-- Фирменный знак DocRenamer: лист документа с ярлыком имени.
+     Геометрия совпадает с assets/make_logo.py, который собирает .ico и .png. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"
+     role="img" aria-label="DocRenamer">
+  <title>DocRenamer</title>
+  <rect width="256" height="256" rx="56" fill="#1b2027"/>
+  <rect x="64" y="40" width="128" height="176" rx="12" fill="#eef2f7"/>
+  <path d="M156 40 L192 76 L156 76 Z" fill="#c6d0dd"/>
+  <g fill="#96a0af">
+    <rect x="86" y="84" width="20" height="8" rx="4"/>
+    <rect x="112" y="84" width="14" height="8" rx="4"/>
+    <rect x="132" y="84" width="20" height="8" rx="4"/>
+  </g>
+  <path d="M44 126 L66 112 L176 112 L176 140 L66 140 Z" fill="#4fa3ff"/>
+  <circle cx="78" cy="126" r="5.5" fill="#1b2027"/>
+  <g fill="#c4cdd9">
+    <rect x="86" y="158" width="82" height="8" rx="4"/>
+    <rect x="86" y="176" width="66" height="8" rx="4"/>
+    <rect x="86" y="194" width="52" height="8" rx="4"/>
+  </g>
+</svg>
