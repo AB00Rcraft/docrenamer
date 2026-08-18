@@ -58,13 +58,22 @@ jobs:
           python -m pytest -q
 
       - name: Аудит офлайн-режима
-        run: python -m docrenamer.security.offline_guard --audit src
+        run: python -m docrenamer.security.offline_guard --audit src/docrenamer
 
       - name: Проверка стиля
         run: python -m ruff check src tests
 
       - name: Сборка portable-каталога
         run: python -m PyInstaller DocRenamer.spec --noconfirm
+
+      - name: Сборка программы обновления
+        run: >
+          python -m PyInstaller
+          --noconfirm --onefile --console
+          --name DocRenamerUpdate
+          --paths src
+          src/docrenamer_updater/__main__.py
+          --distpath dist/updater --workpath build/updater --specpath build
 
       - name: Сборка одного файла
         env:
@@ -82,6 +91,9 @@ jobs:
           Copy-Item config/*.json "$dist/config/" -Force
           Copy-Item README.md,THIRD_PARTY_NOTICES.md,LICENSE "$dist/" -Force
           Copy-Item runtime/README.md "$dist/КУДА-КЛАСТЬ-КОМПОНЕНТЫ.txt" -Force
+          if (Test-Path dist/updater/DocRenamerUpdate.exe) {
+            Copy-Item dist/updater/DocRenamerUpdate.exe "$dist/" -Force
+          }
 
       - name: Проверить, что собранное приложение запускается
         shell: pwsh

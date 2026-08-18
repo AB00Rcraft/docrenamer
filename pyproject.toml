@@ -39,6 +39,7 @@ dev = [
 
 [project.scripts]
 docrenamer = "docrenamer.cli:main"
+docrenamer-update = "docrenamer_updater.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -72,7 +73,7 @@ ignore = ["S101", "RUF001", "RUF002", "RUF003"]
 
 [tool.mypy]
 python_version = "3.12"
-packages = ["docrenamer"]
+packages = ["docrenamer", "docrenamer_updater"]
 mypy_path = "src"
 ignore_missing_imports = true
 warn_unused_ignores = true

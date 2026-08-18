@@ -16,7 +16,10 @@ from docrenamer.security.offline_guard import audit_source
 
 pytestmark = pytest.mark.safety
 
-SRC = Path(__file__).resolve().parents[2] / "src"
+#: Аудит относится к программе обработки документов. Обновление вынесено в
+#: отдельный пакет и отдельный исполняемый файл именно для того, чтобы этот
+#: инвариант оставался безусловным (см. docrenamer_updater).
+SRC = Path(__file__).resolve().parents[2] / "src" / "docrenamer"
 
 #: Модули, которым разрешено атомарно заменять СОБСТВЕННЫЕ служебные файлы.
 OS_REPLACE_ALLOWED = {"config.py"}

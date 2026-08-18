@@ -229,6 +229,37 @@ class ArchivesConfig:
 
 
 @dataclass(slots=True)
+class UpdateConfig:
+    """Проверка обновлений (см. docrenamer_updater).
+
+    Сама программа в сеть не выходит: она лишь запускает отдельный
+    исполняемый файл обновления, и только по команде пользователя.
+    """
+
+    #: Показывать кнопку проверки обновлений.
+    enabled: bool = True
+    #: Проверять при запуске. По умолчанию выключено: без явной команды
+    #: программа не обращается никуда.
+    check_on_start: bool = False
+    repository: str = "AB00Rcraft/docrenamer"
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> UpdateConfig:
+        cfg = cls()
+        for name in ("enabled", "check_on_start"):
+            if name in data:
+                setattr(cfg, name, _as_bool(data[name], f"update.{name}"))
+        if "repository" in data:
+            value = str(data["repository"]).strip()
+            if "/" not in value or " " in value:
+                raise ConfigError(
+                    "Параметр «update.repository» должен быть вида «владелец/репозиторий»."
+                )
+            cfg.repository = value
+        return cfg
+
+
+@dataclass(slots=True)
 class LimitsConfig:
     max_text_chars_for_ai: int = 24_000
     max_plaintext_file_mb: int = 50
@@ -287,6 +318,7 @@ class Config:
     media: MediaConfig = field(default_factory=MediaConfig)
     archives: ArchivesConfig = field(default_factory=ArchivesConfig)
     limits: LimitsConfig = field(default_factory=LimitsConfig)
+    update: UpdateConfig = field(default_factory=UpdateConfig)
 
     #: Откуда конфиг был прочитан (для логов). Не участвует в fingerprint.
     source_file: str = ""
@@ -331,6 +363,7 @@ class Config:
         cfg.media = MediaConfig.from_dict(data.get("media", {}) or {})
         cfg.archives = ArchivesConfig.from_dict(data.get("archives", {}) or {})
         cfg.limits = LimitsConfig.from_dict(data.get("limits", {}) or {})
+        cfg.update = UpdateConfig.from_dict(data.get("update", {}) or {})
         return cfg
 
     def to_dict(self) -> dict[str, Any]:

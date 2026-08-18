@@ -52,6 +52,12 @@
     "max_entries_to_analyze": 500
   },
 
+  "update": {
+    "enabled": true,
+    "check_on_start": false,
+    "repository": "AB00Rcraft/docrenamer"
+  },
+
   "limits": {
     "max_text_chars_for_ai": 24000,
     "max_plaintext_file_mb": 50,

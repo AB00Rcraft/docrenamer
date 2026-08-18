@@ -44,6 +44,7 @@ Name: "contextmenu"; Description: "Пункт «Переименовать фа�
 
 [Files]
 Source: "..\dist\DocRenamer\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\dist\updater\DocRenamerUpdate.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\runtime\README.md"; DestDir: "{app}\runtime"; Flags: ignoreversion

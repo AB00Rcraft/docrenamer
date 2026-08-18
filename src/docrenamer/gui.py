@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import tkinter as tk
@@ -145,6 +146,8 @@ class DocRenamerGUI:
         # Быстрая проверка готовности при запуске: без обращения к модели,
         # чтобы окно открывалось сразу.
         self.root.after(300, lambda: self._selftest(probe_model=False, quiet=True))
+        if self.config.update.enabled and self.config.update.check_on_start:
+            self.root.after(1500, self._check_updates)
 
     # --- построение интерфейса --------------------------------------------
 
@@ -346,14 +349,16 @@ class DocRenamerGUI:
             show="headings",
             selectmode="browse",
         )
-        for column, title, width, anchor, stretch in (
-            ("current", "Текущее имя", 220, "w", False),
-            ("proposed", "Предлагаемое имя", 420, "w", True),
-            ("confidence", "Уверенность", 110, "center", False),
-            ("status", "Состояние", 170, "w", False),
-        ):
+        columns: tuple[tuple[str, str, int, bool, bool], ...] = (
+            ("current", "Текущее имя", 220, False, False),
+            ("proposed", "Предлагаемое имя", 420, False, True),
+            ("confidence", "Уверенность", 110, True, False),
+            ("status", "Состояние", 170, False, False),
+        )
+        for column, title, width, centered, stretch in columns:
             self.tree.heading(column, text=title)
-            self.tree.column(column, width=width, anchor=anchor, stretch=stretch, minwidth=90)
+            self.tree.column(column, width=width, minwidth=90, stretch=stretch)
+            self.tree.column(column, anchor="center" if centered else "w")
         self.tree.tag_configure("ok", foreground=COLORS["ok"])
         self.tree.tag_configure("warn", foreground=COLORS["warn"])
         self.tree.tag_configure("error", foreground=COLORS["error"])
@@ -471,6 +476,10 @@ class DocRenamerGUI:
         ttk.Button(
             actions, text="Настройки", width=BUTTON_WIDTH, command=self._open_settings
         ).grid(row=0, column=7, sticky="e", padx=(PAD_M, 0))
+        if self.config.update.enabled:
+            ttk.Button(
+                actions, text="Обновления", width=BUTTON_WIDTH, command=self._check_updates
+            ).grid(row=0, column=8, sticky="e", padx=(PAD_M, 0))
 
     def _set_details(self, text: str) -> None:
         """Показать подробности выбранного файла."""
@@ -522,6 +531,8 @@ class DocRenamerGUI:
                     self._finish(str(payload))
                 elif kind == "readiness":
                     self._show_readiness(payload)
+                elif kind == "update":
+                    self._handle_update_answer(payload)
                 elif kind == "error":
                     self._finish("Ошибка")
                     messagebox.showerror("DocRenamer", str(payload))
@@ -660,7 +671,6 @@ class DocRenamerGUI:
 
     def _open_logs(self) -> None:
         """Открыть каталог журналов средствами системы."""
-        import os
         import shutil
         import subprocess
 
@@ -685,6 +695,98 @@ class DocRenamerGUI:
 
     def _open_settings(self) -> None:
         SettingsDialog(self.root, self.config, self.paths)
+
+    # --- обновления --------------------------------------------------------
+
+    def _updater_command(self, arguments: list[str]) -> list[str] | None:
+        """Команда запуска отдельной программы обновления.
+
+        Обновление вынесено в самостоятельный исполняемый файл: сама программа
+        обработки документов не содержит сетевого кода (раздел 3 ТЗ).
+        """
+        import sys
+
+        candidates = [
+            self.paths.root / ("DocRenamerUpdate.exe" if os.name == "nt" else "DocRenamerUpdate"),
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return [str(candidate), *arguments]
+        if not getattr(sys, "frozen", False):
+            return [sys.executable, "-m", "docrenamer_updater", *arguments]
+        return None
+
+    def _check_updates(self) -> None:
+        """Проверить наличие новой версии по команде пользователя."""
+        import json
+        import subprocess
+
+        command = self._updater_command(
+            ["--check", "--json", "--current", __version__,
+             "--repository", self.config.update.repository]
+        )
+        if command is None:
+            messagebox.showinfo(
+                "Обновления",
+                "Программа обновления не найдена рядом с приложением.\n"
+                "Скачайте новую версию со страницы релизов вручную.",
+            )
+            return
+
+        def work() -> None:
+            try:
+                completed = subprocess.run(  # noqa: S603 — список аргументов, без оболочки
+                    command, shell=False, capture_output=True, timeout=120, check=False
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                self.events.put(("error", f"Проверка обновлений не выполнена: {exc}"))
+                return
+            output = completed.stdout.decode("utf-8", errors="replace").strip()
+            try:
+                payload = json.loads(output.splitlines()[-1]) if output else {}
+            except (json.JSONDecodeError, IndexError):
+                payload = {}
+            self.events.put(("update", payload))
+            self.events.put(("done", "Проверка обновлений завершена"))
+
+        self._run_async(work)
+
+    def _handle_update_answer(self, payload: dict[str, Any]) -> None:
+        """Показать результат проверки и, при согласии, установить обновление."""
+        if payload.get("error"):
+            messagebox.showwarning("Обновления", str(payload["error"]))
+            return
+        if not payload.get("update"):
+            self._log("Установлена последняя версия.")
+            messagebox.showinfo("Обновления", "У вас последняя версия.")
+            return
+
+        version = str(payload.get("version", ""))
+        self._log(f"Доступна версия {version}.")
+        if not messagebox.askyesno(
+            "Доступно обновление",
+            f"Доступна версия {version} (установлена {__version__}).\n\n"
+            "Скачать и установить сейчас? Программа закроется и запустится заново.",
+        ):
+            return
+
+        import subprocess
+        import sys
+
+        restart = str(self.paths.root / "DocRenamer.exe") if os.name == "nt" else sys.executable
+        command = self._updater_command(
+            ["--install", "--current", __version__,
+             "--repository", self.config.update.repository, "--restart", restart]
+        )
+        if command is None:
+            return
+        try:
+            subprocess.Popen(command, shell=False, close_fds=True)  # noqa: S603
+        except (OSError, subprocess.SubprocessError) as exc:
+            messagebox.showerror("Обновления", f"Не удалось запустить обновление: {exc}")
+            return
+        self.app.cleanup()
+        self.root.destroy()
 
     # --- готовность комплекта ---------------------------------------------
 
