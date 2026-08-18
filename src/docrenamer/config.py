@@ -131,6 +131,7 @@ class NamingConfig:
     confidence_threshold: float = 0.88
     separator: str = "__"
     allow_filesystem_date_fallback: bool = True
+    preserve_good_names: bool = True
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> NamingConfig:
@@ -159,6 +160,10 @@ class NamingConfig:
         if "allow_filesystem_date_fallback" in data:
             cfg.allow_filesystem_date_fallback = _as_bool(
                 data["allow_filesystem_date_fallback"], "naming.allow_filesystem_date_fallback"
+            )
+        if "preserve_good_names" in data:
+            cfg.preserve_good_names = _as_bool(
+                data["preserve_good_names"], "naming.preserve_good_names"
             )
         return cfg
 

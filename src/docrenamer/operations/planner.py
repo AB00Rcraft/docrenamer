@@ -231,8 +231,16 @@ def build_plan(
             item.add_status(related)
 
         if not proposed:
-            item.status = Status.NO_NAME_PROPOSED.value
-            item.message = item.message or "Не удалось предложить осмысленное имя."
+            if analysis.has_status(Status.NAME_UNCHANGED):
+                item.status = Status.NAME_UNCHANGED.value
+                item.message = item.message or (
+                    "Имя уже осмысленное — оставлено без изменений."
+                    if analysis.has_status(Status.ORIGINAL_NAME_PRESERVED)
+                    else "Имя уже соответствует предложенному."
+                )
+            else:
+                item.status = Status.NO_NAME_PROPOSED.value
+                item.message = item.message or "Не удалось предложить осмысленное имя."
             plan.items.append(item)
             taken.add(fold(source.name))
             continue

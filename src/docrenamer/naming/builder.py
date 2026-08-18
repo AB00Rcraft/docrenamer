@@ -13,9 +13,70 @@ from __future__ import annotations
 import re
 
 from docrenamer.config import Config
-from docrenamer.naming.sanitizer import Segment, assemble_filename, sanitize_component
+from docrenamer.extractors.dates import extract_dates
+from docrenamer.naming.sanitizer import (
+    MAX_FILENAME_BYTES,
+    Segment,
+    assemble_filename,
+    sanitize_component,
+    sanitize_filename,
+)
 from docrenamer.textquality import comparison_key
-from docrenamer.types import Category, EntityRef, Field, FileAnalysis, nfc
+from docrenamer.types import Category, EntityRef, Field, FileAnalysis, Source, nfc
+
+#: Слова, которые не делают имя осмысленным.
+GENERIC_STEM_RE = re.compile(
+    r"^(?:"
+    r"img|image|dsc|dscn|dscf|pict|photo|foto|pxl|vid|mvi|mov|movie|clip|"
+    r"scan|scan0*\d*|skan|doc|docs?|document|file|copy|new|snapshot|screenshot|"
+    r"изображение|снимок|фото|видео|скан|документ|копия|новый|безымянный|без[\s_-]?имени"
+    r")[\s_\-]*\d*$",
+    re.IGNORECASE,
+)
+
+#: Имя-«штамп» устройства или системы: 20260818_142203, IMG_0032, 8f3a91c2.
+TIMESTAMP_STEM_RE = re.compile(
+    r"^(?:\d{4}[-_.]?\d{2}[-_.]?\d{2})?[\s_\-]*\d{0,8}$|^[0-9a-f]{8,}$", re.IGNORECASE
+)
+
+#: Имена по умолчанию, которые предлагают сами программы: смысла в них нет,
+#: сколько бы слов в них ни было.
+GENERIC_PHRASES: frozenset[str] = frozenset(
+    {
+        "новый документ",
+        "новая презентация",
+        "новая книга",
+        "новый лист",
+        "новый файл",
+        "документ без имени",
+        "без имени",
+        "безымянный",
+        "копия документа",
+        "отсканированный документ",
+        "скан документа",
+        "new document",
+        "untitled document",
+        "untitled",
+        "presentation",
+        "презентация без названия",
+    }
+)
+
+#: Минимальная длина слова, которое считается содержательным.
+MEANINGFUL_WORD_LENGTH = 3
+#: Длина одиночного слова, при которой имя уже считается осмысленным.
+SINGLE_WORD_LENGTH = 8
+
+_TOKEN_SPLIT_RE = re.compile(r"[\s_\-–—.,()]+")
+
+#: Слова, которые сами по себе ничего не сообщают о документе.
+FILLER_TOKENS: frozenset[str] = frozenset(
+    {
+        "скан", "scan", "скан-копия", "копия", "copy", "фото", "foto", "photo",
+        "изображение", "image", "img", "файл", "file", "документ", "document",
+        "doc", "новый", "новая", "new", "стр", "страница", "page", "видео", "video",
+    }
+)
 
 #: Приоритеты сегментов: чем выше, тем позже сегмент будет отброшен при
 #: нехватке длины (раздел 45 ТЗ).
@@ -57,6 +118,75 @@ LEGAL_FORMS: tuple[tuple[str, str], ...] = (
 _QUOTES = "«»\"'“”„‟‘’"
 _INITIALS_RE = re.compile(r"\b([А-ЯЁ])\.\s*([А-ЯЁ])\.")
 _SPACE_RE = re.compile(r"\s+")
+
+
+def is_meaningful_stem(stem: str) -> bool:
+    """Похоже ли, что имя файла придумал человек, а не устройство.
+
+    Осмысленным считается имя не менее чем из двух содержательных слов либо из
+    одного достаточно длинного слова. Технические имена вида ``IMG_0032``,
+    ``scan0007``, ``20260818_142203`` и ``Новый документ`` осмысленными не
+    считаются.
+    """
+    text = nfc(str(stem or "")).strip()
+    if not text:
+        return False
+    if GENERIC_STEM_RE.match(text) or TIMESTAMP_STEM_RE.match(text):
+        return False
+    # «Новый документ 2» — то же самое, что «Новый документ».
+    phrase = re.sub(r"[\s_\-]*\d+$", "", comparison_key(text)).strip()
+    if phrase in GENERIC_PHRASES:
+        return False
+
+    tokens = [t for t in _TOKEN_SPLIT_RE.split(text) if t]
+    words = [
+        t
+        for t in tokens
+        if sum(ch.isalpha() for ch in t) >= MEANINGFUL_WORD_LENGTH
+        and comparison_key(t) not in FILLER_TOKENS
+    ]
+    if not words:
+        return False
+    if len(words) >= 2:
+        return True
+    return len(words[0]) >= SINGLE_WORD_LENGTH
+
+
+def build_preserved_name(analysis: FileAnalysis, config: Config) -> tuple[str, list[str]]:
+    """Сохранить осмысленное имя, дополнив его по единому образцу.
+
+    Единственное допустимое дополнение — дата документа в начале имени, и
+    только если её там ещё нет. Сам текст имени сохраняется как есть, включая
+    пробелы, «№», кавычки и регистр букв: ломать хорошее имя нельзя
+    (раздел 92 ТЗ).
+    """
+    original = analysis.source_path.stem
+    unchanged = analysis.source_path.name
+    date_value = _value(analysis.document_date)
+    if not date_value:
+        return unchanged, []
+
+    # Дата уже в имени — в любом виде, хоть «18 августа 2026 года».
+    existing = {c.value for c in extract_dates(original)}
+    if date_value in existing or date_value[:10] in original:
+        return unchanged, []
+    if analysis.document_date is not None and analysis.document_date.source is Source.FILESYSTEM:
+        # Дата из файловой системы не повод трогать хорошее имя.
+        return unchanged, []
+
+    stem = sanitize_component(original, keep_spaces=True)
+    if not stem:
+        return unchanged, []
+
+    separator = config.naming.separator
+    name = sanitize_filename(
+        f"{date_value}{separator}{stem}",
+        analysis.source_path.suffix,
+        max_length=config.naming.max_filename_length,
+        max_bytes=MAX_FILENAME_BYTES,
+        keep_spaces=True,
+    )
+    return name, []
 
 
 def normalize_organization(name: str) -> str:
@@ -285,17 +415,30 @@ def _geodata_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     return segments
 
 
+def _series_segment(analysis: FileAnalysis) -> Segment | None:
+    """Номер тома или части — он не должен потеряться при переименовании."""
+    series = (analysis.metadata or {}).get("series")
+    if not isinstance(series, dict) or not series.get("segment"):
+        return None
+    return Segment(str(series["segment"]), PRIORITY_IDENTIFIER, droppable=False, kind="series")
+
+
 def build_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     """Выбрать стратегию сегментов по категории файла."""
     if analysis.category in (Category.IMAGE, Category.VIDEO, Category.AUDIO):
-        return _media_segments(analysis, config)
-    if analysis.category is Category.EMAIL:
-        return _email_segments(analysis, config)
-    if analysis.category is Category.ARCHIVE:
-        return _archive_segments(analysis, config)
-    if analysis.category is Category.GEODATA:
-        return _geodata_segments(analysis, config)
-    return _document_segments(analysis, config)
+        segments = _media_segments(analysis, config)
+    elif analysis.category is Category.EMAIL:
+        segments = _email_segments(analysis, config)
+    elif analysis.category is Category.ARCHIVE:
+        segments = _archive_segments(analysis, config)
+    elif analysis.category is Category.GEODATA:
+        segments = _geodata_segments(analysis, config)
+    else:
+        segments = _document_segments(analysis, config)
+    part = _series_segment(analysis)
+    if part is not None:
+        segments.append(part)
+    return segments
 
 
 def _dedupe_segments(segments: list[Segment]) -> list[Segment]:
@@ -322,6 +465,9 @@ def build_filename(analysis: FileAnalysis, config: Config) -> tuple[str, list[st
         ``(имя, отброшенные_сегменты)``. Пустое имя означает, что осмысленное
         предложение построить не удалось.
     """
+    if config.naming.preserve_good_names and is_meaningful_stem(analysis.source_path.stem):
+        return build_preserved_name(analysis, config)
+
     segments = _dedupe_segments(
         [s for s in build_segments(analysis, config) if sanitize_component(s.text)]
     )

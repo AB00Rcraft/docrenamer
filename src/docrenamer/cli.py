@@ -14,6 +14,7 @@ from pathlib import Path
 from docrenamer import __version__
 from docrenamer.app import Application, Cancelled
 from docrenamer.config import ConfigError, load_config
+from docrenamer.console import configure_console
 from docrenamer.paths import default_paths
 from docrenamer.types import Status, describe
 
@@ -191,6 +192,7 @@ def run_undo_wizard(app: Application, paths) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Точка входа CLI."""
+    configure_console()
     parser = build_parser()
     args = parser.parse_args(argv)
 

@@ -62,6 +62,8 @@ class Status(StrEnum):
     DATE_SOURCE_FILE_PROPERTY = "DATE_SOURCE_FILE_PROPERTY"
     NO_NAME_PROPOSED = "NO_NAME_PROPOSED"
     NAME_UNCHANGED = "NAME_UNCHANGED"
+    ORIGINAL_NAME_PRESERVED = "ORIGINAL_NAME_PRESERVED"
+    SERIES_PART_DETECTED = "SERIES_PART_DETECTED"
     AI_DISABLED = "AI_DISABLED"
     AI_NOT_NEEDED = "AI_NOT_NEEDED"
     LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
@@ -111,6 +113,12 @@ STATUS_DESCRIPTIONS_RU: dict[str, str] = {
     ),
     Status.NO_NAME_PROPOSED: "Не удалось предложить осмысленное имя.",
     Status.NAME_UNCHANGED: "Предложенное имя совпадает с текущим.",
+    Status.ORIGINAL_NAME_PRESERVED: (
+        "Имя уже осмысленное — оно сохранено, добавлена только дата."
+    ),
+    Status.SERIES_PART_DETECTED: (
+        "Файл распознан как часть многотомного документа; номер части сохранён."
+    ),
     Status.AI_DISABLED: "Локальный ИИ отключён в настройках.",
     Status.AI_NOT_NEEDED: "Локальный ИИ не понадобился.",
     Status.LIMIT_EXCEEDED: "Превышен лимит обработки, данные усечены.",

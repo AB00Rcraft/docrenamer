@@ -33,7 +33,8 @@
     "max_organizations_in_filename": 2,
     "confidence_threshold": 0.88,
     "separator": "__",
-    "allow_filesystem_date_fallback": true
+    "allow_filesystem_date_fallback": true,
+    "preserve_good_names": true
   },
 
   "media": {

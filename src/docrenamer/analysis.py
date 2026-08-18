@@ -25,8 +25,9 @@ from docrenamer.extractors.identifiers import (
 )
 from docrenamer.extractors.organizations import extract_organizations, select_organizations
 from docrenamer.extractors.persons import extract_persons, select_persons
+from docrenamer.extractors.series import detect_series
 from docrenamer.file_signature import check_extension, detect_type
-from docrenamer.naming.builder import build_filename
+from docrenamer.naming.builder import build_filename, is_meaningful_stem
 from docrenamer.paths import AppPaths, default_paths
 from docrenamer.security.limits import Limits
 from docrenamer.security.temp_cleanup import SessionTemp
@@ -60,6 +61,10 @@ class Analyzer(Protocol):
 
     def model_info(self) -> dict[str, Any]:
         """Сведения о локальной модели для manifest."""
+        ...
+
+    def postprocess(self, analyses: list[FileAnalysis]) -> None:
+        """Уточнения, которые видны только на уровне всего каталога."""
         ...
 
 
@@ -175,6 +180,82 @@ class Pipeline:
         return analysis
 
     # --- расширяемые этапы -------------------------------------------------
+
+    def postprocess(self, analyses: list[FileAnalysis]) -> None:
+        """Уточнения, которые видны только на уровне всего каталога.
+
+        Сейчас это многотомные документы: «Дело 1», «Дело 2» — части одного
+        целого. Номер части обязан сохраниться в новом имени, иначе порядок
+        томов теряется, а разрешение коллизий выдаёт их за случайно совпавшие
+        файлы.
+        """
+        series = detect_series([a.source_path for a in analyses])
+        if not series:
+            return
+        by_path = {a.source_path: a for a in analyses}
+
+        groups: dict[tuple[Any, str, str], list[Path]] = {}
+        for path, info in series.items():
+            key = (path.parent, info.base.casefold(), path.suffix.lower())
+            groups.setdefault(key, []).append(path)
+
+        for members in groups.values():
+            ordered = sorted(members, key=lambda p: series[p].part)
+            self._share_series_facts([by_path[p] for p in ordered if p in by_path], series)
+
+        for path, info in series.items():
+            analysis = by_path.get(path)
+            if analysis is None:
+                continue
+            analysis.metadata["series"] = info.to_dict()
+            analysis.add_status(Status.SERIES_PART_DETECTED)
+            self.finalize(analysis)
+
+    def _share_series_facts(
+        self, group: list[FileAnalysis], series: dict[Path, Any]
+    ) -> None:
+        """Дополнить тома недостающими реквизитами из соседних томов.
+
+        Второй том часто идёт без шапки: даты и номера дела в нём просто нет.
+        Значение берётся у соседа явно — с указанием файла-источника и с
+        пониженной уверенностью, чтобы происхождение факта не терялось
+        (раздел 63 ТЗ).
+        """
+        if len(group) < 2:
+            return
+        def is_own_fact(field_value: Field | None) -> bool:
+            """Установлен ли факт по самому документу, а не по файловой системе."""
+            if field_value is None or not field_value.accepted:
+                return False
+            return field_value.source not in (Source.FILESYSTEM,)
+
+        for attribute in ("document_date", "document_type", "document_number"):
+            donor: FileAnalysis | None = None
+            for analysis in group:
+                field_value = getattr(analysis, attribute)
+                if not is_own_fact(field_value):
+                    continue
+                current: Field | None = getattr(donor, attribute) if donor else None
+                if current is None or field_value.confidence > current.confidence:
+                    donor = analysis
+            if donor is None:
+                continue
+            source_field: Field = getattr(donor, attribute)
+            for analysis in group:
+                if analysis is donor:
+                    continue
+                if is_own_fact(getattr(analysis, attribute)):
+                    continue
+                setattr(
+                    analysis,
+                    attribute,
+                    Field(
+                        value=source_field.value,
+                        source=source_field.source,
+                        evidence=f"из файла «{donor.source_path.name}»: {source_field.evidence}",
+                        confidence=round(source_field.confidence * 0.85, 4),
+                    ),
+                )
 
     def enrich(self, analysis: FileAnalysis) -> None:
         """Детерминированные extractors, затем — при необходимости — локальная LLM.
@@ -572,6 +653,10 @@ class Pipeline:
     def finalize(self, analysis: FileAnalysis) -> None:
         """Построить имя и итоговую уверенность (разделы 44, 46 ТЗ)."""
         analysis.overall_confidence = compute_confidence(analysis)
+        if self.config.naming.preserve_good_names and is_meaningful_stem(
+            analysis.source_path.stem
+        ):
+            analysis.add_status(Status.ORIGINAL_NAME_PRESERVED)
         name, dropped = build_filename(analysis, self.config)
         if dropped:
             analysis.metadata["dropped_segments"] = dropped

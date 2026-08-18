@@ -201,7 +201,8 @@ def test_long_russian_name_is_shortened_safely(
         "Общество с ограниченной ответственностью «Альфа-Бета-Гамма-Дельта-Эпсилон». "
         "Исполнительное производство № 652102/26/77028-ИП."
     )
-    (workdir / ("очень-длинное-русское-имя-" * 3 + ".txt")).write_bytes(payload.encode())
+    # Техническое имя: генерируется новое, поэтому проверяется именно укорачивание.
+    (workdir / "scan0007.txt").write_bytes(payload.encode())
 
     app = Application(config, paths=app_paths)
     plan = app.preview(workdir)

@@ -152,6 +152,12 @@ class Application:
                     else analysis.detected_type
                 )
                 self.log_line(f"→ {label} | confidence {analysis.overall_confidence:.2f}")
+
+        # Часть уточнений видна только по каталогу целиком: например, тома
+        # одного документа.
+        postprocess = getattr(self.analyzer, "postprocess", None)
+        if callable(postprocess):
+            postprocess(results)
         return results
 
     def preview(

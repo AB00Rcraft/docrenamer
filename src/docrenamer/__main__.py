@@ -11,7 +11,9 @@ import sys
 
 def main() -> int:
     from docrenamer.cli import main as cli_main
+    from docrenamer.console import configure_console
 
+    configure_console()
     return cli_main()
 
 

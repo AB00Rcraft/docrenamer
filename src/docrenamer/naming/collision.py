@@ -70,6 +70,7 @@ def _with_counter(
         extension,
         max_length=max_length,
         max_bytes=max_bytes,
+        keep_spaces=True,
     )
 
 
@@ -97,8 +98,15 @@ def resolve_collision(
     directory = target.parent
     # Повторная санитизация делает функцию устойчивой к слишком длинным именам:
     # обращение к ФС с именем длиннее NAME_MAX завершилось бы OSError.
+    # keep_spaces: имя уже прошло санитизацию в builder'е; здесь проверяется
+    # только длина. Иначе сохранённое человеческое имя «Договор займа №17»
+    # превратилось бы в «Договор-займа-№17».
     safe_name = sanitize_filename(
-        target.stem, target.suffix, max_length=max_length, max_bytes=max_bytes
+        target.stem,
+        target.suffix,
+        max_length=max_length,
+        max_bytes=max_bytes,
+        keep_spaces=True,
     )
     target = directory / safe_name
 

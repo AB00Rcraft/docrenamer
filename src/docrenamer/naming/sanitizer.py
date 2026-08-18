@@ -46,8 +46,15 @@ def strip_control_chars(value: str) -> str:
     return "".join(ch for ch in value if unicodedata.category(ch) not in ("Cc", "Cf"))
 
 
-def sanitize_component(value: str, *, max_length: int = 0) -> str:
-    """Привести один смысловой сегмент имени к безопасному виду."""
+def sanitize_component(value: str, *, max_length: int = 0, keep_spaces: bool = False) -> str:
+    """Привести один смысловой сегмент имени к безопасному виду.
+
+    Args:
+        keep_spaces: сохранить пробелы вместо замены на дефисы. Нужно, когда
+            имя придумал человек и его нельзя переписывать (раздел 92 ТЗ):
+            «Договор займа №17» должен остаться собой, а не превратиться в
+            «Договор-займа-№17».
+    """
     if not value:
         return ""
     text = nfc(str(value))
@@ -57,7 +64,8 @@ def sanitize_component(value: str, *, max_length: int = 0) -> str:
     for bad in FORBIDDEN_TO_REMOVE:
         text = text.replace(bad, "")
     text = _WHITESPACE_RE.sub(" ", text).strip()
-    text = text.replace(" ", "-")
+    if not keep_spaces:
+        text = text.replace(" ", "-")
     text = _DASH_RUN_RE.sub("--", text)
     text = _TRIM_RE.sub("", text)
     if max_length > 0:
@@ -121,6 +129,7 @@ def sanitize_filename(
     max_bytes: int = MAX_FILENAME_BYTES,
     fallback: str = "файл",
     lowercase_extension: bool = True,
+    keep_spaces: bool = False,
 ) -> str:
     """Собрать безопасное имя файла из основы и расширения.
 
@@ -134,7 +143,7 @@ def sanitize_filename(
     * длина не превышает ни символьный, ни байтовый лимит.
     """
     ext = normalize_extension(extension, lowercase=lowercase_extension)
-    base = sanitize_component(stem)
+    base = sanitize_component(stem, keep_spaces=keep_spaces)
 
     if base in ("", ".", ".."):
         base = fallback

@@ -154,6 +154,9 @@ def assert_no_network_modules() -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     """Точка входа аудита для CI и release-проверки (раздел 61 ТЗ)."""
+    from docrenamer.console import configure_console
+
+    configure_console()
     parser = argparse.ArgumentParser(
         prog="offline_guard",
         description="Аудит исходников на отсутствие сетевой функциональности.",
