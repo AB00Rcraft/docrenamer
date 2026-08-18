@@ -639,6 +639,8 @@ class DocRenamerGUI:
                     self.status_var.set(progress_label(done, total, stage))
                 elif kind == "plan":
                     self._show_plan(payload)
+                elif kind == "plan_cleared":
+                    self._clear_plan(str(payload))
                 elif kind == "done":
                     self._finish(str(payload))
                 elif kind == "readiness":
@@ -756,6 +758,12 @@ class DocRenamerGUI:
             summary = f"Переименовано: {report.renamed}, пропущено: {report.skipped}"
             if report.critical:
                 self.events.put(("error", report.critical))
+            self.events.put(
+                (
+                    "plan_cleared",
+                    "Файлы переименованы. Нажмите «Предпросмотр», чтобы увидеть папку заново.",
+                )
+            )
             self.events.put(("done", summary))
 
         self._run_async(work)
@@ -771,6 +779,13 @@ class DocRenamerGUI:
 
         def work() -> None:
             report = self.app.undo(Path(selected))
+            self.events.put(
+                (
+                    "plan_cleared",
+                    "Прежние имена восстановлены. Нажмите «Предпросмотр», "
+                    "чтобы начать заново.",
+                )
+            )
             self.events.put(
                 ("done", f"Восстановлено: {report.restored}, пропущено: {report.skipped}")
             )
@@ -957,6 +972,17 @@ class DocRenamerGUI:
         for key, value in plan.counters().items():
             self._log(f"{key}: {value}")
 
+    def _clear_plan(self, reason: str) -> None:
+        """Убрать список после операции: имена файлов уже изменились.
+
+        Иначе на экране остаётся план, который больше не соответствует
+        содержимому папки.
+        """
+        self.plan = None
+        self.tree.delete(*self.tree.get_children())
+        self._set_details(reason)
+        self._log(reason)
+
     def _toggle_selected(self, _event: object = None) -> str:
         """Включить или исключить строку плана (раздел 79 ТЗ)."""
         if self.plan is None:
@@ -988,6 +1014,9 @@ class DocRenamerGUI:
         ):
             def work() -> None:
                 report = self.app.undo(manifest)
+                self.events.put(
+                    ("plan_cleared", "Прежние имена восстановлены после незавершённой сессии.")
+                )
                 self.events.put(("done", f"Откат: восстановлено {report.restored}"))
 
             self._run_async(work)
