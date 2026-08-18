@@ -156,6 +156,7 @@ def test_russian_names_round_trip(workdir: Path) -> None:
     assert sha256_file(target) == sha
 
 
+@pytest.mark.skipif(os.name == "nt", reason="в Windows используется os.rename, не link+unlink")
 def test_link_fallback_also_never_overwrites(
     monkeypatch: pytest.MonkeyPatch, source_file: Path, workdir: Path
 ) -> None:
@@ -178,6 +179,7 @@ def test_link_fallback_also_never_overwrites(
     assert source_file.exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="в Windows используется os.rename, не link+unlink")
 def test_link_fallback_preserves_content(
     monkeypatch: pytest.MonkeyPatch, source_file: Path, workdir: Path
 ) -> None:

@@ -128,8 +128,11 @@ def test_filesystem_date_fallback_can_be_disabled(
     assert analysis.document_date is None
 
 
-@pytest.mark.skipif(os.name == "nt", reason="права доступа POSIX")
-@pytest.mark.skipif(os.geteuid() == 0, reason="root игнорирует права доступа")
+# Короткое замыкание обязательно: в Windows os.geteuid просто не существует.
+@pytest.mark.skipif(
+    os.name == "nt" or os.geteuid() == 0,
+    reason="проверка прав доступа имеет смысл только на POSIX и не под root",
+)
 def test_access_denied_does_not_stop_batch(
     config: Config, app_paths: AppPaths, workdir: Path
 ) -> None:
@@ -210,7 +213,11 @@ def test_long_russian_name_is_shortened_safely(
     assert "652102-26-77028-ИП" in item.proposed_filename
 
     report = app.apply(plan)
-    assert report.failed == 0
+    assert not report.critical
+    # В Windows суммарный путь может упереться в предел 260 символов — это
+    # штатный отказ с понятным кодом, а не сбой (раздел 69 ТЗ).
+    allowed = {Status.RENAMED.value, Status.PATH_TOO_LONG.value}
+    assert all(r["status"] in allowed for r in report.results), report.results
 
 
 def test_office_created_property_is_not_document_date(

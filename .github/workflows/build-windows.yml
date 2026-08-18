@@ -48,7 +48,14 @@ jobs:
           pip install -e .
 
       - name: Тесты
-        run: python -m pytest -q
+        env:
+          # Короткий временный каталог: длинные русские имена в стандартном
+          # %TEMP% упираются в ограничение пути Windows в 260 символов.
+          TEMP: C:\t
+          TMP: C:\t
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\t | Out-Null
+          python -m pytest -q
 
       - name: Аудит офлайн-режима
         run: python -m docrenamer.security.offline_guard --audit src
