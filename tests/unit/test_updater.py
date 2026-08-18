@@ -212,6 +212,10 @@ def test_oversized_download_is_refused(monkeypatch: pytest.MonkeyPatch, tmp_path
     with pytest.raises(UpdateError):
         download(release, tmp_path)
 
+    # Незавершённая загрузка не остаётся на диске (в Windows файл нельзя
+    # удалить, пока он открыт, — проверяется именно порядок операций).
+    assert not list(tmp_path.iterdir())
+
 
 # --- командная строка -------------------------------------------------------
 

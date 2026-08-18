@@ -131,17 +131,22 @@ def download(release: Release, target_dir: Path) -> Path:
 
     digest = hashlib.sha256()
     written = 0
-    with _open(url, timeout=TIMEOUT_SECONDS * 10) as response, open(target, "wb") as handle:
-        while True:
-            chunk = response.read(1024 * 256)
-            if not chunk:
-                break
-            written += len(chunk)
-            if written > MAX_ASSET_BYTES:
-                target.unlink(missing_ok=True)
-                raise UpdateError("Файл обновления неправдоподобно большой.")
-            digest.update(chunk)
-            handle.write(chunk)
+    try:
+        # Удаление выполняется только после закрытия файла: Windows не даёт
+        # удалить файл, который ещё открыт.
+        with _open(url, timeout=TIMEOUT_SECONDS * 10) as response, open(target, "wb") as handle:
+            while True:
+                chunk = response.read(1024 * 256)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_ASSET_BYTES:
+                    raise UpdateError("Файл обновления неправдоподобно большой.")
+                digest.update(chunk)
+                handle.write(chunk)
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
 
     expected = release.checksums.get(name, "")
     if not expected:
