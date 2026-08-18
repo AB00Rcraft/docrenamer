@@ -1,0 +1,136 @@
+# Сборка portable-дистрибутива для Windows (разделы 70, 88 ТЗ).
+#
+# Здесь собирается то, что нельзя собрать на Linux: PyInstaller не умеет
+# кросс-компиляцию, исполняемый файл Windows создаётся только на Windows.
+#
+# Как получить готовый DocRenamer.exe:
+#   1. Загрузить репозиторий на GitHub.
+#   2. Вкладка Actions → «Сборка для Windows» → Run workflow.
+#   3. По завершении скачать артефакт DocRenamer-onefile (один файл .exe)
+#      или DocRenamer-portable (каталог по раскладке раздела 4 ТЗ).
+#
+# Публикация релиза: создать тег вида v1.0.0 — файлы прикрепятся к релизу.
+
+name: Сборка для Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Получить исходники
+        uses: actions/checkout@v4
+
+      - name: Установить Python 3.12 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: "x64"
+
+      - name: Установить зафиксированные зависимости
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock.txt
+          pip install pyinstaller reportlab pytest pytest-timeout ruff
+          pip install -e .
+
+      - name: Тесты
+        run: python -m pytest -q
+
+      - name: Аудит офлайн-режима
+        run: python -m docrenamer.security.offline_guard --audit src
+
+      - name: Проверка стиля
+        run: python -m ruff check src tests
+
+      - name: Сборка portable-каталога
+        run: python -m PyInstaller DocRenamer.spec --noconfirm
+
+      - name: Сборка одного файла
+        env:
+          DOCRENAMER_ONEFILE: "1"
+        run: >
+          python -m PyInstaller DocRenamer.spec --noconfirm
+          --distpath dist/onefile --workpath build/onefile
+
+      - name: Дополнить portable-каталог
+        shell: pwsh
+        run: |
+          $dist = "dist/DocRenamer"
+          New-Item -ItemType Directory -Force -Path "$dist/config","$dist/models",
+            "$dist/logs","$dist/manifests","$dist/runtime_temp","$dist/LICENSES" | Out-Null
+          Copy-Item config/*.json "$dist/config/" -Force
+          Copy-Item README.md,THIRD_PARTY_NOTICES.md,LICENSE "$dist/" -Force
+          Copy-Item runtime/README.md "$dist/КУДА-КЛАСТЬ-КОМПОНЕНТЫ.txt" -Force
+
+      - name: Проверить, что собранное приложение запускается
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path проверка | Out-Null
+          Set-Content -Path "проверка/договор.txt" -Encoding UTF8 -Value @"
+          ДОГОВОР ЗАЙМА № 17
+          город Москва, 18 августа 2026 года
+          Займодавец ООО «Альфа», Заёмщик Петров Сергей Андреевич
+          "@
+          & "dist/DocRenamer/DocRenamer.exe" "проверка" | Tee-Object -Variable out
+          if (-not ($out -match "Договор")) { throw "Приложение не распознало тестовый документ" }
+          & "dist/onefile/DocRenamer.exe" "проверка" | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Однофайловая сборка завершилась с ошибкой" }
+          if (Get-ChildItem "проверка" | Where-Object { $_.Name -ne "договор.txt" }) {
+            throw "Предпросмотр изменил файлы, чего быть не должно"
+          }
+
+      - name: Артефакт — один файл
+        uses: actions/upload-artifact@v4
+        with:
+          name: DocRenamer-onefile
+          path: dist/onefile/DocRenamer.exe
+          if-no-files-found: error
+
+      - name: Артефакт — portable-каталог
+        uses: actions/upload-artifact@v4
+        with:
+          name: DocRenamer-portable
+          path: dist/DocRenamer/
+          if-no-files-found: error
+
+      - name: Приложить файлы к релизу
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/DocRenamer/* -DestinationPath DocRenamer-portable.zip -Force
+          Copy-Item dist/onefile/DocRenamer.exe DocRenamer.exe -Force
+          Get-FileHash DocRenamer.exe,DocRenamer-portable.zip -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content SHA256SUMS.txt -Encoding ASCII
+
+      - name: Создать релиз
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            DocRenamer.exe
+            DocRenamer-portable.zip
+            SHA256SUMS.txt
+          body: |
+            Portable-версия DocRenamer Offline для Windows 10/11 x64.
+
+            - `DocRenamer.exe` — один файл, ничего устанавливать не нужно.
+            - `DocRenamer-portable.zip` — раскладка по разделу 4 ТЗ,
+              сюда кладутся OCR и локальная модель.
+
+            Программа работает полностью офлайн и по умолчанию только
+            показывает предложенные имена, ничего не меняя.

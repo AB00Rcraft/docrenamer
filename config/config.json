@@ -1,0 +1,56 @@
+{
+  "strict_local_mode": true,
+  "language": "ru-RU",
+  "internal_text_encoding": "utf-8",
+  "human_log_encoding": "utf-8",
+  "unicode_normalization": "NFC",
+  "recursive": true,
+  "dry_run_default": true,
+  "forensic_mode": false,
+
+  "ai": {
+    "enabled": true,
+    "engine": "llama_cpp_cli",
+    "model_path": "./models/document-model.gguf",
+    "context_size": 8192,
+    "max_output_tokens": 900,
+    "temperature": 0.1,
+    "timeout_seconds": 120
+  },
+
+  "ocr": {
+    "enabled": true,
+    "languages": ["rus", "eng"],
+    "pdf_max_pages": 12,
+    "first_pages": 5,
+    "last_pages": 3,
+    "timeout_seconds": 60
+  },
+
+  "naming": {
+    "max_filename_length": 160,
+    "max_persons_in_filename": 3,
+    "max_organizations_in_filename": 2,
+    "confidence_threshold": 0.88,
+    "separator": "__",
+    "allow_filesystem_date_fallback": true
+  },
+
+  "media": {
+    "use_exif": true,
+    "use_ffprobe": true,
+    "include_device": true,
+    "include_gps_coordinates": false
+  },
+
+  "archives": {
+    "inspect_only": true,
+    "max_entries_to_analyze": 500
+  },
+
+  "limits": {
+    "max_text_chars_for_ai": 24000,
+    "max_plaintext_file_mb": 50,
+    "max_single_file_mb": 4096
+  }
+}

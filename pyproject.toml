@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docrenamer"
+version = "1.0.0"
+description = "DocRenamer Offline — локальное безопасное переименование документов по содержимому"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+
+dependencies = [
+    "pypdf",
+    "pypdfium2",
+    "python-docx",
+    "openpyxl",
+    "xlrd",
+    "python-pptx",
+    "Pillow",
+    "pillow-heif",
+    "beautifulsoup4",
+    "charset-normalizer",
+    "defusedxml",
+    "olefile",
+    "extract-msg",
+    "mutagen",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-timeout",
+    "ruff",
+    "mypy",
+    "pyinstaller",
+    "reportlab",
+]
+
+[project.scripts]
+docrenamer = "docrenamer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+timeout = 300
+markers = [
+    "safety: тесты инвариантов безопасности файловой системы",
+    "offline: тесты, доказывающие работу без сети",
+    "integration: сквозные сценарии",
+    "requires_tesseract: требует локальный Tesseract",
+    "requires_exiftool: требует локальный ExifTool",
+    "requires_ffprobe: требует локальный ffprobe",
+    "requires_model: требует локальную GGUF-модель",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "S", "RUF"]
+ignore = ["S101", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+packages = ["docrenamer"]
+mypy_path = "src"
+ignore_missing_imports = true
+warn_unused_ignores = true

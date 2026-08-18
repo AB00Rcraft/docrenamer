@@ -1,0 +1,16 @@
+# Production baseline (раздел 59 ТЗ).
+# Версии фиксируются в requirements.lock.txt после успешной сборки и regression tests (раздел 71, 94).
+pypdf
+pypdfium2
+python-docx
+openpyxl
+xlrd
+python-pptx
+Pillow
+pillow-heif
+beautifulsoup4
+charset-normalizer
+defusedxml
+olefile
+extract-msg
+mutagen

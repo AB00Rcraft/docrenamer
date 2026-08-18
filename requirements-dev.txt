@@ -1,0 +1,7 @@
+-r requirements.txt
+pytest
+pytest-timeout
+reportlab  # генерация синтетических PDF для тестов
+ruff
+mypy
+pyinstaller
