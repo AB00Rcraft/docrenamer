@@ -78,14 +78,18 @@ jobs:
         run: python -m PyInstaller DocRenamer.spec --noconfirm
 
       - name: Сборка программы обновления
-        run: >
-          python -m PyInstaller
-          --noconfirm --onefile --console
-          --name DocRenamerUpdate
-          --icon assets/icon.ico
-          --paths src
-          src/docrenamer_updater/__main__.py
-          --distpath dist/updater --workpath build/updater --specpath build
+        shell: pwsh
+        run: |
+          # Путь к значку абсолютный: PyInstaller ищет его относительно
+          # каталога spec-файла, а он лежит в build\.
+          $icon = (Resolve-Path assets/icon.ico).Path
+          python -m PyInstaller `
+            --noconfirm --onefile --console `
+            --name DocRenamerUpdate `
+            --icon "$icon" `
+            --paths src `
+            src/docrenamer_updater/__main__.py `
+            --distpath dist/updater --workpath build/updater --specpath build
 
       - name: Сборка одного файла
         env:
