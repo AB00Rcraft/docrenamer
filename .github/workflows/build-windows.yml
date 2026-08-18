@@ -100,20 +100,6 @@ jobs:
             throw "Предпросмотр изменил файлы, чего быть не должно"
           }
 
-      - name: Артефакт — один файл
-        uses: actions/upload-artifact@v4
-        with:
-          name: DocRenamer-onefile
-          path: dist/onefile/DocRenamer.exe
-          if-no-files-found: error
-
-      - name: Артефакт — portable-каталог
-        uses: actions/upload-artifact@v4
-        with:
-          name: DocRenamer-portable
-          path: dist/DocRenamer/
-          if-no-files-found: error
-
       - name: Приложить файлы к релизу
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
@@ -141,3 +127,20 @@ jobs:
 
             Программа работает полностью офлайн и по умолчанию только
             показывает предложенные имена, ничего не меняя.
+
+      - name: Артефакт — один файл
+        uses: actions/upload-artifact@v4
+        with:
+          name: DocRenamer-onefile
+          path: dist/onefile/DocRenamer.exe
+          if-no-files-found: error
+        continue-on-error: true
+
+      - name: Артефакт — portable-каталог
+        uses: actions/upload-artifact@v4
+        with:
+          name: DocRenamer-portable
+          path: dist/DocRenamer/
+          if-no-files-found: error
+        continue-on-error: true
+
