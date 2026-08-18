@@ -211,7 +211,7 @@ def test_long_russian_name_is_shortened_safely(
     assert len(item.proposed_filename) <= config.naming.max_filename_length
     assert len(item.proposed_filename.encode("utf-8")) <= 255
     # Идентификатор переживает укорачивание (раздел 45 ТЗ).
-    assert "652102-26-77028-ИП" in item.proposed_filename
+    assert "652102_26_77028-ИП" in item.proposed_filename
 
     report = app.apply(plan)
     assert not report.critical
@@ -269,7 +269,7 @@ def test_gpx_track_gets_meaningful_name(
     plan = app.preview(workdir)
     item = plan.items[0]
 
-    assert item.proposed_filename.startswith("Трек__Поездка-Москва")
+    assert item.proposed_filename.startswith("Трек_Поездка_Москва")
     assert "03.08.2026" in item.proposed_filename
     assert item.proposed_filename.endswith(".gpx")
     assert item.selected

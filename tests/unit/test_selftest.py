@@ -26,7 +26,7 @@ def test_pipeline_check_actually_parses_a_document(report) -> None:
 
     assert check.level is Level.OK
     assert "27.07.2026" in check.detail
-    assert "Постановление-СПИ" in check.detail
+    assert "Постановление_СПИ" in check.detail
 
 
 def test_core_checks_pass_on_correct_build(report) -> None:

@@ -46,7 +46,7 @@ def read_image(path: Path, context: ReaderContext) -> ReadResult:
         coordinates = gps_pair(exif_values)
         if coordinates:
             metadata["gps"] = [round(coordinates[0], 6), round(coordinates[1], 6)]
-            metadata["gps_short"] = f"GPS-{coordinates[0]:.4f}_{coordinates[1]:.4f}"
+            metadata["gps_short"] = f"GPS_{coordinates[0]:.4f}_{coordinates[1]:.4f}"
         for key, name in (
             ("ImageWidth", "width"),
             ("ImageHeight", "height"),

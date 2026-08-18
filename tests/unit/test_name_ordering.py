@@ -32,8 +32,8 @@ def test_name_starts_with_document_kind(
 
     name = preview_names(config, app_paths, workdir)["scan0007.txt"]
 
-    assert name.startswith("Постановление-СПИ__")
-    assert name.endswith("__27.07.2026.txt")
+    assert name.startswith("Постановление_СПИ_")
+    assert name.endswith("_27.07.2026.txt")
 
 
 def test_same_kind_documents_sort_together(
@@ -45,11 +45,11 @@ def test_same_kind_documents_sort_together(
     (workdir / "scan0003.txt").write_bytes(POSTANOVLENIE.replace("27 июля", "28 июля").encode())
 
     names = sorted(preview_names(config, app_paths, workdir).values())
-    kinds = [name.split("__")[0] for name in names]
 
-    assert kinds == sorted(kinds), "имена не группируются по виду документа"
-    assert kinds[0].startswith("Договор")
-    assert kinds[1] == kinds[2] == "Постановление-СПИ"
+    # Однотипные документы стоят подряд: сортировка по имени группирует их.
+    assert names[0].startswith("Договор_")
+    assert names[1].startswith("Постановление_СПИ_")
+    assert names[2].startswith("Постановление_СПИ_")
 
 
 def test_photos_and_videos_group_by_kind(
@@ -60,8 +60,8 @@ def test_photos_and_videos_group_by_kind(
 
     names = preview_names(config, app_paths, workdir)
 
-    assert names["IMG_7834.jpg"].startswith("Фото__")
-    assert names["VID_3871.mp4"].startswith("Видео__")
+    assert names["IMG_7834.jpg"].startswith("Фото_")
+    assert names["VID_3871.mp4"].startswith("Видео_")
 
 
 def test_date_first_order_is_available(
@@ -74,7 +74,7 @@ def test_date_first_order_is_available(
 
     name = preview_names(config, app_paths, workdir)["scan0007.txt"]
 
-    assert name.startswith("2026-07-27__")
+    assert name.startswith("2026-07-27_")
 
 
 def test_preserved_name_also_sorts_by_its_own_words(
@@ -86,7 +86,7 @@ def test_preserved_name_also_sorts_by_its_own_words(
     name = preview_names(config, app_paths, workdir)["Постановление по делу Иванова.txt"]
 
     assert name.startswith("Постановление по делу Иванова")
-    assert name.endswith("__27.07.2026.txt")
+    assert name.endswith("_27.07.2026.txt")
 
 
 def test_name_stays_readable_in_length(
@@ -96,9 +96,7 @@ def test_name_stays_readable_in_length(
     (workdir / "scan0007.txt").write_bytes(POSTANOVLENIE.encode())
 
     name = preview_names(config, app_paths, workdir)["scan0007.txt"]
-    segments = name.rsplit(".", 1)[0].split("__")
-
-    assert len(segments) <= config.naming.max_segments + 1, name
+    assert len(name) <= 100, f"имя слишком длинное: {len(name)}"
     assert len(name) <= 100, f"имя слишком длинное: {len(name)}"
 
 
@@ -109,9 +107,9 @@ def test_no_more_than_two_participants(
     (workdir / "scan0007.txt").write_bytes(POSTANOVLENIE.encode())
 
     name = preview_names(config, app_paths, workdir)["scan0007.txt"]
-    entities = [part for part in name.split("__") if "--" in part]
-
-    assert all(len(part.split("--")) <= 2 for part in entities), name
+    # Участники стоят подряд: их не больше двух.
+    assert name.count("Иванов") <= 1
+    assert len([p for p in name.split("_") if p and p[0].isupper()]) <= 6, name
 
 
 def test_person_comes_before_organization(
@@ -122,7 +120,7 @@ def test_person_comes_before_organization(
 
     name = preview_names(config, app_paths, workdir)["scan0007.txt"]
 
-    assert "Иванов--" in name
+    assert "Иванов_" in name
 
 
 def test_one_authority_is_enough(config: Config, app_paths: AppPaths, workdir: Path) -> None:

@@ -705,12 +705,16 @@ class Pipeline:
 
 
 def _media_stamp(iso_value: str) -> str:
-    """Преобразовать ISO-метку в формат имени файла ``2026-08-03_18-42-17``."""
+    """Дата и время съёмки для имени файла.
+
+    Время записывается через точку, как и дата: единственным разделителем
+    частей имени остаётся подчёркивание.
+    """
     value = iso_value.strip().replace("T", " ")
     date_part, _, time_part = value.partition(" ")
     if not time_part:
         return date_part
-    return f"{date_part}_{time_part[:8].replace(':', '-')}"
+    return f"{date_part}_{time_part[:8].replace(':', '.')}"
 
 
 def _person_from_address(raw: str) -> str:

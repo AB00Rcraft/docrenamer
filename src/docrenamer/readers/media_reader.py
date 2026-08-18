@@ -52,7 +52,7 @@ def read_media(path: Path, context: ReaderContext) -> ReadResult:
             if values.get("gps"):
                 latitude, longitude = values["gps"][0], values["gps"][1]
                 metadata.setdefault("gps", [latitude, longitude])
-                metadata.setdefault("gps_short", f"GPS-{latitude:.4f}_{longitude:.4f}")
+                metadata.setdefault("gps_short", f"GPS_{latitude:.4f}_{longitude:.4f}")
 
     exif_backend = context.extras.get("exiftool")
     if exif_backend is not None and context.config.media.use_exif and "datetime" not in metadata:

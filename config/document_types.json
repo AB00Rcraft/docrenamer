@@ -28,7 +28,7 @@
         "допсоглашение"
       ],
       "priority": 75,
-      "filename_abbreviation": "Доп-соглашение"
+      "filename_abbreviation": "Доп_соглашение"
     },
     {
       "canonical_name": "Акт",
@@ -58,7 +58,7 @@
         "сверки взаиморасчетов"
       ],
       "priority": 80,
-      "filename_abbreviation": "Акт-сверки"
+      "filename_abbreviation": "Акт_сверки"
     },
     {
       "canonical_name": "Доверенность",
@@ -150,7 +150,7 @@
         "в апелляционном порядке"
       ],
       "priority": 85,
-      "filename_abbreviation": "Апелляционная-жалоба"
+      "filename_abbreviation": "Апелляционная_жалоба"
     },
     {
       "canonical_name": "Кассационная жалоба",
@@ -162,7 +162,7 @@
         "в кассационном порядке"
       ],
       "priority": 85,
-      "filename_abbreviation": "Кассационная-жалоба"
+      "filename_abbreviation": "Кассационная_жалоба"
     },
     {
       "canonical_name": "Ходатайство",
@@ -276,7 +276,7 @@
         "о возбуждении исполнительного производства"
       ],
       "priority": 90,
-      "filename_abbreviation": "Постановление-СПИ"
+      "filename_abbreviation": "Постановление_СПИ"
     },
     {
       "canonical_name": "Постановление следователя",
@@ -288,7 +288,7 @@
         "следственным управлением"
       ],
       "priority": 88,
-      "filename_abbreviation": "Постановление-следователя"
+      "filename_abbreviation": "Постановление_следователя"
     },
     {
       "canonical_name": "Постановление дознавателя",
@@ -299,7 +299,7 @@
         "отдела дознания"
       ],
       "priority": 88,
-      "filename_abbreviation": "Постановление-дознавателя"
+      "filename_abbreviation": "Постановление_дознавателя"
     },
     {
       "canonical_name": "Определение суда",
@@ -312,7 +312,7 @@
         "определил:"
       ],
       "priority": 80,
-      "filename_abbreviation": "Определение-суда"
+      "filename_abbreviation": "Определение_суда"
     },
     {
       "canonical_name": "Решение суда",
@@ -326,7 +326,7 @@
         "решил:"
       ],
       "priority": 85,
-      "filename_abbreviation": "Решение-суда"
+      "filename_abbreviation": "Решение_суда"
     },
     {
       "canonical_name": "Приговор",
@@ -348,7 +348,7 @@
         "взыскать в порядке приказного производства"
       ],
       "priority": 88,
-      "filename_abbreviation": "Судебный-приказ"
+      "filename_abbreviation": "Судебный_приказ"
     },
     {
       "canonical_name": "Протокол судебного заседания",
@@ -358,7 +358,7 @@
         "секретарь судебного заседания"
       ],
       "priority": 88,
-      "filename_abbreviation": "Протокол-заседания"
+      "filename_abbreviation": "Протокол_заседания"
     },
     {
       "canonical_name": "Протокол допроса",
@@ -372,7 +372,7 @@
         "мне разъяснены права"
       ],
       "priority": 90,
-      "filename_abbreviation": "Протокол-допроса"
+      "filename_abbreviation": "Протокол_допроса"
     },
     {
       "canonical_name": "Протокол осмотра",
@@ -384,7 +384,7 @@
         "осмотр места происшествия"
       ],
       "priority": 88,
-      "filename_abbreviation": "Протокол-осмотра"
+      "filename_abbreviation": "Протокол_осмотра"
     },
     {
       "canonical_name": "Протокол обыска",
@@ -395,7 +395,7 @@
         "произведён обыск"
       ],
       "priority": 90,
-      "filename_abbreviation": "Протокол-обыска"
+      "filename_abbreviation": "Протокол_обыска"
     },
     {
       "canonical_name": "Протокол выемки",
@@ -405,7 +405,7 @@
         "произведена выемка"
       ],
       "priority": 90,
-      "filename_abbreviation": "Протокол-выемки"
+      "filename_abbreviation": "Протокол_выемки"
     },
     {
       "canonical_name": "Обвинительное заключение",
@@ -415,7 +415,7 @@
         "обвиняется в совершении преступления"
       ],
       "priority": 92,
-      "filename_abbreviation": "Обвинительное-заключение"
+      "filename_abbreviation": "Обвинительное_заключение"
     },
     {
       "canonical_name": "Обвинительный акт",
@@ -424,7 +424,7 @@
         "обвинительный акт"
       ],
       "priority": 92,
-      "filename_abbreviation": "Обвинительный-акт"
+      "filename_abbreviation": "Обвинительный_акт"
     },
     {
       "canonical_name": "Заключение эксперта",
@@ -439,7 +439,7 @@
         "на разрешение эксперта"
       ],
       "priority": 88,
-      "filename_abbreviation": "Заключение-эксперта"
+      "filename_abbreviation": "Заключение_эксперта"
     },
     {
       "canonical_name": "Исполнительный лист",
@@ -450,7 +450,7 @@
         "серия вс"
       ],
       "priority": 90,
-      "filename_abbreviation": "Исполнительный-лист"
+      "filename_abbreviation": "Исполнительный_лист"
     },
     {
       "canonical_name": "Платёжное поручение",
@@ -466,7 +466,7 @@
         "бик"
       ],
       "priority": 85,
-      "filename_abbreviation": "Платежное-поручение"
+      "filename_abbreviation": "Платежное_поручение"
     },
     {
       "canonical_name": "Счёт",
@@ -496,7 +496,7 @@
         "к платежно-расчетному документу"
       ],
       "priority": 85,
-      "filename_abbreviation": "Счет-фактура"
+      "filename_abbreviation": "Счет_фактура"
     },
     {
       "canonical_name": "Выписка",
@@ -521,7 +521,7 @@
         "остаток на конец периода"
       ],
       "priority": 80,
-      "filename_abbreviation": "Банковская-выписка"
+      "filename_abbreviation": "Банковская_выписка"
     },
     {
       "canonical_name": "Расписка",
@@ -546,7 +546,7 @@
         "грузополучатель"
       ],
       "priority": 82,
-      "filename_abbreviation": "Товарная-накладная"
+      "filename_abbreviation": "Товарная_накладная"
     },
     {
       "canonical_name": "Служебная записка",
@@ -558,7 +558,7 @@
         "докладная записка"
       ],
       "priority": 70,
-      "filename_abbreviation": "Служебная-записка"
+      "filename_abbreviation": "Служебная_записка"
     },
     {
       "canonical_name": "Приказ",

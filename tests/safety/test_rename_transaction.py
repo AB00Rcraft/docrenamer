@@ -26,7 +26,7 @@ def source_file(workdir: Path) -> Path:
 def test_rename_preserves_content_and_hash(source_file: Path, workdir: Path) -> None:
     sha_before = sha256_file(source_file)
     size_before = source_file.stat().st_size
-    target = workdir / "2026-07-27__Постановление-СПИ__Иванов.pdf"
+    target = workdir / "2026-07-27_Постановление_СПИ_Иванов.pdf"
 
     outcome = rename_file(
         source_file,
@@ -147,7 +147,7 @@ def test_russian_names_round_trip(workdir: Path) -> None:
     source = workdir / "Постановление Иванова И.И..pdf"
     source.write_bytes(PAYLOAD)
     sha = sha256_file(source)
-    target = workdir / "2026-07-27__Постановление-СПИ__Иванов-ИИ__652102-26-77028-ИП.pdf"
+    target = workdir / "2026-07-27_Постановление_СПИ_Иванов-ИИ__652102_26_77028_ИП.pdf"
 
     outcome = rename_file(source, target, expected_sha256=sha)
 
@@ -188,7 +188,7 @@ def test_link_fallback_preserves_content(
 
     monkeypatch.setattr(rename_module, "_renameat2_noreplace", lambda source, target: False)
     sha_before = sha256_file(source_file)
-    target = workdir / "2026-07-27__Постановление.pdf"
+    target = workdir / "2026-07-27_Постановление.pdf"
 
     outcome = rename_file(source_file, target, expected_sha256=sha_before)
 

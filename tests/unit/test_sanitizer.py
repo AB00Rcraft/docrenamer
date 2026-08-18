@@ -77,17 +77,17 @@ def test_unicode_normalized_to_nfc() -> None:
 def test_segments_dropped_by_priority_keeping_identifier() -> None:
     segments = [
         Segment("2026-07-27", 95, droppable=False, kind="date"),
-        Segment("Постановление-СПИ", 80, droppable=False, kind="type"),
+        Segment("Постановление_СПИ", 80, droppable=False, kind="type"),
         Segment("очень длинный предмет " * 6, 25, kind="subject"),
         Segment("Иванов", 60, kind="entities"),
-        Segment("652102-26-77028-ИП", 90, droppable=False, kind="identifier"),
+        Segment("652102_26_77028_ИП", 90, droppable=False, kind="identifier"),
     ]
     name, dropped = assemble_filename(segments, ".pdf", max_length=80)
-    assert "652102-26-77028-ИП" in name
+    assert "652102_26_77028_ИП" in name
     assert "2026-07-27" in name
     assert "subject" in dropped
     assert len(name) <= 80
 
 
 def test_sanitize_component_collapses_whitespace() -> None:
-    assert sanitize_component("  Иван   Иванович  ") == "Иван-Иванович"
+    assert sanitize_component("  Иван   Иванович  ") == "Иван_Иванович"

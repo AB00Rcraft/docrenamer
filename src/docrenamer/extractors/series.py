@@ -54,8 +54,8 @@ class SeriesInfo:
         именно нумеровал пользователь.
         """
         if self.label:
-            return f"{self.label}-{self.part}"
-        return f"{self.part}-из-{self.total}"
+            return f"{self.label}_{self.part}"
+        return f"{self.part}_из_{self.total}"
 
     def to_dict(self) -> dict[str, object]:
         return {

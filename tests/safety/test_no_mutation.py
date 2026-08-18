@@ -110,7 +110,7 @@ def test_existing_files_are_never_overwritten(
     """Занятое имя получает суффикс, чужой файл остаётся нетронутым."""
     builders.make_docx(workdir / "a.docx")
     builders.make_docx(workdir / "b.docx")
-    guard = workdir / "2026-08-18__Договор__ООО-Альфа--Петров__17.docx"
+    guard = workdir / "2026-08-18__Договор__ООО_Альфа--Петров__17.docx"
     guard.write_bytes(b"NE TROGAT")
     guard_hash = hashlib.sha256(b"NE TROGAT").hexdigest()
 

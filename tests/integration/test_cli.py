@@ -33,7 +33,7 @@ def test_default_mode_is_dry_run(cli_env: Path, capsys: pytest.CaptureFixture[st
     assert code == cli.EXIT_OK
     assert {p.name for p in cli_env.iterdir()} == before
     assert "Режим предпросмотра" in output
-    assert "Постановление-СПИ" in output
+    assert "Постановление_СПИ" in output
 
 
 def test_apply_renames_and_writes_manifest(

@@ -64,7 +64,7 @@ def _with_counter(
     trimmed = stem
     while trimmed and (len(trimmed) > budget_chars or utf8_length(trimmed) > budget_bytes):
         trimmed = trimmed[:-1]
-    trimmed = trimmed.rstrip(" .-_") or "файл"
+    trimmed = trimmed.rstrip(" ._-") or "файл"
     return sanitize_filename(
         f"{trimmed}{suffix}",
         extension,
@@ -79,7 +79,7 @@ def resolve_collision(
     *,
     taken: set[str] | None = None,
     source: Path | None = None,
-    separator: str = "__",
+    separator: str = "_",
     max_length: int = 160,
     max_bytes: int = MAX_FILENAME_BYTES,
 ) -> tuple[Path, bool]:

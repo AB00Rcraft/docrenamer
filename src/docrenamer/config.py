@@ -129,7 +129,7 @@ class NamingConfig:
     max_persons_in_filename: int = 2
     max_organizations_in_filename: int = 1
     confidence_threshold: float = 0.88
-    separator: str = "__"
+    separator: str = "_"
     allow_filesystem_date_fallback: bool = True
     preserve_good_names: bool = True
     date_format: str = "DD.MM.YYYY"

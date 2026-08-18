@@ -17,6 +17,7 @@ from docrenamer.extractors.dates import extract_dates
 from docrenamer.naming.dates import date_variants, format_date_for_name
 from docrenamer.naming.sanitizer import (
     MAX_FILENAME_BYTES,
+    SEPARATOR_CHAR,
     Segment,
     assemble_filename,
     sanitize_component,
@@ -243,7 +244,7 @@ def normalize_organization(name: str) -> str:
             core = core[match.end() :].strip().strip(_QUOTES).strip()
     core = core.strip(_QUOTES).strip(" -—–")
     if abbreviation and core:
-        return f"{abbreviation}-{core}"
+        return f"{abbreviation}{SEPARATOR_CHAR}{core}"
     return core or abbreviation
 
 
@@ -269,7 +270,7 @@ def format_person(entity: EntityRef) -> str:
         initials = initials or parts[1].replace(".", "")
         surname = parts[0]
     if initials:
-        return f"{surname}-{initials}"
+        return f"{surname}{SEPARATOR_CHAR}{initials}"
     return surname
 
 
@@ -302,7 +303,7 @@ def _entities_segment(
         *unique(people, config.naming.max_persons_in_filename),
         *unique(orgs, config.naming.max_organizations_in_filename),
     ]
-    return "--".join(parts[:MAX_ENTITIES_IN_NAME])
+    return SEPARATOR_CHAR.join(parts[:MAX_ENTITIES_IN_NAME])
 
 
 def _value(field: Field | None) -> str:
@@ -392,7 +393,7 @@ def clean_original_stem(stem: str) -> str:
     # (IMG 7834), сами по себе — нет.
     if all(part.isdigit() for part in parts):
         return ""
-    return "-".join(parts)
+    return SEPARATOR_CHAR.join(parts)
 
 
 def _media_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
@@ -463,7 +464,7 @@ def _archive_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
         segments.append(Segment(entities, PRIORITY_ENTITY, kind="entities"))
     count = (analysis.metadata or {}).get("entry_count")
     if count:
-        segments.append(Segment(f"{count}-файлов", PRIORITY_ENTITY, kind="count"))
+        segments.append(Segment(f"{count}_файлов", PRIORITY_ENTITY, kind="count"))
     return segments
 
 
@@ -486,13 +487,13 @@ def _geodata_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
 
     length = metadata.get("gpx_length_km")
     if isinstance(length, int | float) and length > 0:
-        segments.append(Segment(f"{length:.1f}-км", PRIORITY_ENTITY, kind="duration"))
+        segments.append(Segment(f"{length:.1f}_км", PRIORITY_ENTITY, kind="duration"))
     points = metadata.get("gpx_points")
     if not length and isinstance(points, int) and points > 0:
-        segments.append(Segment(f"{points}-точек", PRIORITY_ENTITY, kind="count"))
+        segments.append(Segment(f"{points}_точек", PRIORITY_ENTITY, kind="count"))
     placemarks = metadata.get("kml_placemarks")
     if isinstance(placemarks, int) and placemarks > 0:
-        segments.append(Segment(f"{placemarks}-меток", PRIORITY_ENTITY, kind="count"))
+        segments.append(Segment(f"{placemarks}_меток", PRIORITY_ENTITY, kind="count"))
     return segments
 
 

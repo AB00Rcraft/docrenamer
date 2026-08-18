@@ -31,7 +31,7 @@ DOCUMENT = (
         ("2026-07-27", "DD.MM.YYYY", "27.07.2026"),
         ("2026-07-27", "DD-MM-YYYY", "27-07-2026"),
         ("2026-07-27", "YYYY-MM-DD", "2026-07-27"),
-        ("2026-08-03_18-42-17", "DD.MM.YYYY", "03.08.2026_18-42-17"),
+        ("2026-08-03_18.42.17", "DD.MM.YYYY", "03.08.2026_18.42.17"),
         ("2026-01-09", "DD.MM.YYYY", "09.01.2026"),
     ],
 )
@@ -69,7 +69,7 @@ def test_filename_uses_russian_date(
     app = Application(config, paths=app_paths)
     item = app.preview(workdir).items[0]
 
-    assert item.proposed_filename.endswith("__27.07.2026.txt")
+    assert item.proposed_filename.endswith("_27.07.2026.txt")
 
 
 def test_iso_format_can_be_restored(
@@ -83,7 +83,7 @@ def test_iso_format_can_be_restored(
     app = Application(config, paths=app_paths)
     item = app.preview(workdir).items[0]
 
-    assert item.proposed_filename.startswith("2026-07-27__")
+    assert item.proposed_filename.startswith("2026-07-27_")
 
 
 def test_manifest_keeps_canonical_date(

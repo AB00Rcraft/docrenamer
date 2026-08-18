@@ -168,7 +168,7 @@ def test_ai_not_called_when_rules_are_confident(tmp_path: Path, config: Config) 
     from docrenamer.types import Field
 
     analysis = make_analysis(tmp_path / "дело.pdf")
-    analysis.document_type = Field("Постановление-СПИ", Source.TEXT, "ПОСТАНОВЛЕНИЕ", 0.96)
+    analysis.document_type = Field("Постановление_СПИ", Source.TEXT, "ПОСТАНОВЛЕНИЕ", 0.96)
     analysis.document_date = Field("2026-07-27", Source.REGEX, "27 июля 2026", 0.97)
     analysis.document_number = Field("652102/26/77028-ИП", Source.REGEX, "№ 652102", 0.96)
 

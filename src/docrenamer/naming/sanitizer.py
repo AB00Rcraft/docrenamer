@@ -13,9 +13,14 @@ from dataclasses import dataclass
 
 from docrenamer.types import nfc
 
+#: Единственный разделитель в имени файла — одинарное подчёркивание.
+SEPARATOR_CHAR = "_"
+
 #: Символы, запрещённые в именах файлов Windows. Разделительные по смыслу
-#: символы заменяются на дефис, чтобы «Иванов/Петров» не склеился в одно слово.
-FORBIDDEN_TO_DASH = {"/": "-", "\\": "-", "|": "-", ":": "-"}
+#: символы заменяются на подчёркивание, чтобы «Иванов/Петров» не склеился
+#: в одно слово.
+FORBIDDEN_TO_DASH = {"/": SEPARATOR_CHAR, "\\": SEPARATOR_CHAR, "|": SEPARATOR_CHAR,
+                     ":": SEPARATOR_CHAR}
 #: Остальные запрещённые символы удаляются.
 FORBIDDEN_TO_REMOVE = '<>"*?'
 
@@ -31,10 +36,14 @@ RESERVED_NAMES = frozenset(
 MAX_FILENAME_BYTES = 255
 
 _WHITESPACE_RE = re.compile(r"\s+")
-#: Три и более дефиса схлопываются до двойного: «--» — значимый разделитель
-#: участников в грамматике имени (раздел 44 ТЗ).
-_DASH_RUN_RE = re.compile(r"-{3,}")
-_TRIM_RE = re.compile(r"^[\s.\-_]+|[\s.\-_]+$")
+#: Повторы разделителя схлопываются: подряд идущие подчёркивания не несут
+#: смысла и только мешают читать имя.
+_SEPARATOR_RUN_RE = re.compile(r"_{2,}")
+
+#: Дефис остаётся там, где он часть самого значения: «пристав-исполнитель»,
+#: «Бета-Инвест», ISO-дата «2026-07-27». Разделителем частей имени служит
+#: только подчёркивание, и ставит его программа.
+_TRIM_RE = re.compile(r"^[\s._-]+|[\s._-]+$")
 
 
 def strip_control_chars(value: str) -> str:
@@ -65,8 +74,8 @@ def sanitize_component(value: str, *, max_length: int = 0, keep_spaces: bool = F
         text = text.replace(bad, "")
     text = _WHITESPACE_RE.sub(" ", text).strip()
     if not keep_spaces:
-        text = text.replace(" ", "-")
-    text = _DASH_RUN_RE.sub("--", text)
+        text = text.replace(" ", SEPARATOR_CHAR)
+    text = _SEPARATOR_RUN_RE.sub(SEPARATOR_CHAR, text)
     text = _TRIM_RE.sub("", text)
     if max_length > 0:
         text = text[:max_length]

@@ -33,7 +33,7 @@ class StubAnalyzer:
         analysis.category = Category.DOCUMENT
         analysis.document_date = Field("2026-07-27", Source.REGEX, "27 июля 2026 г.", 0.97)
         analysis.document_type = Field(
-            "Постановление-СПИ", Source.TEXT, "ПОСТАНОВЛЕНИЕ", 0.96
+            "Постановление_СПИ", Source.TEXT, "ПОСТАНОВЛЕНИЕ", 0.96
         )
         analysis.main_persons = []
         analysis.document_number = Field(
@@ -41,7 +41,7 @@ class StubAnalyzer:
         )
         analysis.overall_confidence = self.confidence
         analysis.proposed_filename = (
-            f"2026-07-27__Постановление-СПИ__{scanned.path.stem}{scanned.path.suffix}"
+            f"2026-07-27_Постановление_СПИ_{scanned.path.stem}{scanned.path.suffix}"
         )
         return analysis
 
@@ -83,11 +83,11 @@ def test_full_cycle_preserves_content_and_supports_undo(
     assert not report.critical
 
     renamed = sorted(p.name for p in workdir.iterdir())
-    assert all(name.startswith("2026-07-27__Постановление-СПИ__") for name in renamed)
+    assert all(name.startswith("2026-07-27_Постановление_СПИ_") for name in renamed)
 
     # Содержимое не изменилось.
     for path in workdir.iterdir():
-        original_stem = path.stem.split("__")[-1]
+        original_stem = path.stem.split("_")[-1]
         expected = hashes_before[f"{original_stem}{path.suffix}"]
         assert sha256_file(path) == expected
 
@@ -160,7 +160,7 @@ def test_collision_gets_numeric_suffix(
     class SameNameAnalyzer(StubAnalyzer):
         def analyze(self, scanned: ScannedFile) -> FileAnalysis:
             analysis = super().analyze(scanned)
-            analysis.proposed_filename = "2026-07-27__Постановление.pdf"
+            analysis.proposed_filename = "2026-07-27_Постановление.pdf"
             return analysis
 
     for name in ("a.pdf", "b.pdf", "c.pdf"):
@@ -173,9 +173,9 @@ def test_collision_gets_numeric_suffix(
     names = sorted(p.name for p in workdir.iterdir())
     assert report.renamed == 3
     assert names == [
-        "2026-07-27__Постановление.pdf",
-        "2026-07-27__Постановление__02.pdf",
-        "2026-07-27__Постановление__03.pdf",
+        "2026-07-27_Постановление.pdf",
+        "2026-07-27_Постановление_02.pdf",
+        "2026-07-27_Постановление_03.pdf",
     ]
 
 
