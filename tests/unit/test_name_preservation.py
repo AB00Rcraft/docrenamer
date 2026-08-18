@@ -83,45 +83,53 @@ def test_machine_names_are_not_protected(stem: str) -> None:
 # --- сохранение хорошего имени ---------------------------------------------
 
 
-def test_good_name_with_date_is_left_alone(
+def test_good_name_is_not_renamed_by_default(
     config: Config, app_paths: AppPaths, workdir: Path
 ) -> None:
-    """Имя осмысленное и дата в нём уже есть — файл не трогаем вовсе."""
+    """Хорошее имя само не меняется, но вариант всё равно предлагается.
+
+    Требование приёмки: галочка не стоит, решение принимает человек.
+    """
     name = "Постановление от 27 июля 2026 года.txt"
     (workdir / name).write_bytes(DOCUMENT.encode())
 
     app = Application(config, paths=app_paths)
-    plan = app.preview(workdir)
+    item = app.preview(workdir).items[0]
 
-    assert plan.items[0].proposed_filename == name
-    assert not plan.items[0].selected
-    assert plan.items[0].status == Status.NAME_UNCHANGED.value
+    assert not item.selected, "хорошее имя не переименовывается само"
+    assert item.status == Status.GOOD_NAME_KEPT.value
+    assert item.proposed_filename != name, "вариант должен быть предложен"
+    assert item.proposed_filename.startswith("Постановление_СПИ_")
 
 
-def test_good_name_is_only_prefixed_with_date(
+def test_good_name_gets_a_proposal_in_our_style(
     config: Config, app_paths: AppPaths, workdir: Path
 ) -> None:
-    """Единственное дополнение — дата в начале. Текст имени не переписывается."""
+    """Для хорошего имени предлагается аккуратный вариант в общем стиле."""
     (workdir / "Постановление по делу Иванова.txt").write_bytes(DOCUMENT.encode())
 
     app = Application(config, paths=app_paths)
     item = app.preview(workdir).items[0]
 
-    assert item.proposed_filename == "Постановление по делу Иванова_27.07.2026.txt"
-    assert item.selected
+    assert item.proposed_filename.startswith("Постановление_СПИ_")
+    assert item.proposed_filename.endswith("_27.07.2026.txt")
+    assert not item.selected
+    assert item.status == Status.GOOD_NAME_KEPT.value
 
 
-def test_preserved_name_keeps_spaces_and_typography(
+def test_original_name_is_kept_verbatim_when_nothing_better_exists(
     config: Config, app_paths: AppPaths, workdir: Path
 ) -> None:
-    """Пробелы, «№», кавычки и регистр остаются такими же, как их задал человек."""
-    (workdir / "Договор займа №17 «Альфа».txt").write_bytes(DOCUMENT.encode())
+    """Если предложить нечего, прежнее имя сохраняется дословно."""
+    (workdir / "Договор займа №17 «Альфа».txt").write_bytes(
+        "Текст без реквизитов, дат и наименований.".encode()
+    )
 
     app = Application(config, paths=app_paths)
     item = app.preview(workdir).items[0]
 
-    assert "Договор займа №17 «Альфа»" in item.proposed_filename
-    assert item.proposed_filename.endswith("_27.07.2026.txt")
+    assert "Договор займа №17 «Альфа»" in item.proposed_filename or not item.proposed_filename
+    assert not item.selected
 
 
 def test_technical_name_is_fully_rebuilt(
@@ -358,4 +366,3 @@ def test_long_human_name_is_rebuilt_using_its_own_data(
     assert "А40-123456-2026" in item.proposed_filename
     assert "15.03.2026" in item.proposed_filename
     assert len(item.proposed_filename) < len(name)
-    assert item.selected

@@ -77,15 +77,15 @@ def test_date_first_order_is_available(
     assert name.startswith("2026-07-27_")
 
 
-def test_preserved_name_also_sorts_by_its_own_words(
+def test_proposal_for_good_name_also_sorts_by_kind(
     config: Config, app_paths: AppPaths, workdir: Path
 ) -> None:
-    """У сохранённого имени дата тоже уходит в конец."""
+    """Предложенный вариант подчиняется общему порядку: вид, затем дата."""
     (workdir / "Постановление по делу Иванова.txt").write_bytes(POSTANOVLENIE.encode())
 
     name = preview_names(config, app_paths, workdir)["Постановление по делу Иванова.txt"]
 
-    assert name.startswith("Постановление по делу Иванова")
+    assert name.startswith("Постановление_СПИ_")
     assert name.endswith("_27.07.2026.txt")
 
 

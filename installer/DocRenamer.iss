@@ -7,7 +7,7 @@
 ; Сборка: ISCC.exe installer\DocRenamer.iss
 
 #define AppName "DocRenamer Offline"
-#define AppVersion "1.0.4"
+#define AppVersion "1.0.5"
 #define AppPublisher "DocRenamer"
 #define AppExeName "DocRenamer.exe"
 

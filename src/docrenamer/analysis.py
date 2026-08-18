@@ -27,7 +27,7 @@ from docrenamer.extractors.organizations import extract_organizations, select_or
 from docrenamer.extractors.persons import extract_persons, select_persons
 from docrenamer.extractors.series import detect_series
 from docrenamer.file_signature import check_extension, detect_type
-from docrenamer.naming.builder import build_filename, is_meaningful_stem
+from docrenamer.naming.builder import build_filename, is_well_formed_name
 from docrenamer.paths import AppPaths, default_paths
 from docrenamer.security.limits import Limits
 from docrenamer.security.temp_cleanup import SessionTemp
@@ -741,10 +741,15 @@ class Pipeline:
     def finalize(self, analysis: FileAnalysis) -> None:
         """Построить имя и итоговую уверенность (разделы 44, 46 ТЗ)."""
         analysis.overall_confidence = compute_confidence(analysis)
-        if self.config.naming.preserve_good_names and is_meaningful_stem(
-            analysis.source_path.stem
-        ):
-            analysis.add_status(Status.ORIGINAL_NAME_PRESERVED)
+        stem = analysis.source_path.stem
+        type_words = frozenset(
+            comparison_key(str(value))
+            for value in (analysis.metadata or {}).get("known_type_words", [])
+        )
+        if self.config.naming.preserve_good_names and is_well_formed_name(stem, type_words):
+            # Имя уже хорошее: вариант всё равно предложим, но отмечать его
+            # галочкой не будем — решение за человеком.
+            analysis.add_status(Status.GOOD_NAME_KEPT)
         name, dropped = build_filename(analysis, self.config)
         if dropped:
             analysis.metadata["dropped_segments"] = dropped

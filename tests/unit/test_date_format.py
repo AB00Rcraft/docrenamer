@@ -103,15 +103,15 @@ def test_manifest_keeps_canonical_date(
         assert analysis["document_date"]["value"] == "2026-07-27"
 
 
-def test_good_name_with_russian_date_is_not_touched(
+def test_good_name_is_not_renamed_without_confirmation(
     config: Config, app_paths: AppPaths, workdir: Path
 ) -> None:
-    """Дата в имени уже записана по-русски — второй раз её не добавляем."""
+    """Файл с хорошим именем сам не переименовывается."""
     name = "Постановление от 27.07.2026.txt"
     (workdir / name).write_bytes(DOCUMENT.encode())
 
     app = Application(config, paths=app_paths)
     item = app.preview(workdir).items[0]
 
-    assert item.proposed_filename == name
     assert not item.selected
+    assert "27.07.2026" in item.proposed_filename

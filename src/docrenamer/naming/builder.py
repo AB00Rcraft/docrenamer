@@ -108,6 +108,8 @@ PRIORITY_SUBJECT = 25
 #: Виды сегментов, которые несут содержательную информацию о файле.
 #: Одной даты недостаточно: если о файле не удалось узнать ничего, кроме его
 #: времени изменения, имя не предлагается (раздел 92 ТЗ).
+#: Слова, взятые из прежнего имени файла, сюда не входят: если кроме них
+#: сказать нечего, переписывать имя не за чем — мы ничего нового не узнали.
 INFORMATIVE_KINDS: frozenset[str] = frozenset(
     {"type", "identifier", "entities", "subject", "device", "duration", "count", "gps"}
 )
@@ -370,7 +372,16 @@ def _document_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
 
     subject_value = _value(analysis.subject)
     if subject_value:
-        segments.append(Segment(subject_value, PRIORITY_SUBJECT, kind="subject"))
+        from_filename = (
+            analysis.subject is not None and analysis.subject.source is Source.FILENAME
+        )
+        segments.append(
+            Segment(
+                subject_value,
+                PRIORITY_SUBJECT,
+                kind="subject_from_name" if from_filename else "subject",
+            )
+        )
 
     entities = _entities_segment(analysis.main_persons, analysis.main_organizations, config)
     if entities:
@@ -608,28 +619,15 @@ def build_filename(analysis: FileAnalysis, config: Config) -> tuple[str, list[st
         ``(имя, отброшенные_сегменты)``. Пустое имя означает, что осмысленное
         предложение построить не удалось.
     """
-    stem = analysis.source_path.stem
-    type_words = frozenset(
-        comparison_key(str(value))
-        for value in (analysis.metadata or {}).get("known_type_words", [])
-    )
-    if (
-        config.naming.preserve_good_names
-        and len(stem) <= MAX_PRESERVED_LENGTH
-        and is_well_formed_name(stem, type_words)
-    ):
-        return build_preserved_name(analysis, config)
-
     segments = _dedupe_segments(
         [s for s in build_segments(analysis, config) if sanitize_component(s.text)]
     )
     segments = _limit_segments(_order_segments(segments, config), config)
-    if not segments:
-        return "", []
-
     if not any(segment.kind in INFORMATIVE_KINDS for segment in segments):
-        # Остались только дата и исходное имя — это не улучшение, а маскировка
-        # того, что о файле ничего не известно.
+        # Предложить нечего. Если человек уже дал имя — оставляем его, добавив
+        # разве что дату (раздел 92 ТЗ).
+        if config.naming.preserve_good_names and is_meaningful_stem(analysis.source_path.stem):
+            return build_preserved_name(analysis, config)
         return "", []
 
     name, dropped = assemble_filename(

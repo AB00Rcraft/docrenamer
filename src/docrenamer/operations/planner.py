@@ -234,8 +234,8 @@ def build_plan(
             if analysis.has_status(Status.NAME_UNCHANGED):
                 item.status = Status.NAME_UNCHANGED.value
                 item.message = item.message or (
-                    "Имя уже осмысленное — оставлено без изменений."
-                    if analysis.has_status(Status.ORIGINAL_NAME_PRESERVED)
+                    "Имя уже хорошее — предложить лучше нечего."
+                    if analysis.has_status(Status.GOOD_NAME_KEPT)
                     else "Имя уже соответствует предложенному."
                 )
             else:
@@ -263,6 +263,11 @@ def build_plan(
         elif related:
             item.status = related
             item.message = "Связанные файлы переименовываются только вручную."
+        elif analysis.has_status(Status.GOOD_NAME_KEPT):
+            item.status = Status.GOOD_NAME_KEPT.value
+            item.message = (
+                "Имя уже хорошее. Вариант предложен — отметьте, если он нравится больше."
+            )
         elif confidence < threshold:
             item.status = Status.SKIPPED_LOW_CONFIDENCE.value
             item.message = (
