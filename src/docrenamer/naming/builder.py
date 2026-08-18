@@ -69,6 +69,10 @@ MEANINGFUL_WORD_LENGTH = 3
 #: Длина одиночного слова, при которой имя уже считается осмысленным.
 SINGLE_WORD_LENGTH = 8
 
+#: Длиннее этого авторское имя уже неудобно: его лучше пересобрать в компактный
+#: формат, использовав сведения, которые в этом имени есть.
+MAX_PRESERVED_LENGTH = 70
+
 _TOKEN_SPLIT_RE = re.compile(r"[\s_\-–—.,()]+")
 
 #: Слова, которые сами по себе ничего не сообщают о документе.
@@ -131,6 +135,29 @@ LEGAL_FORMS: tuple[tuple[str, str], ...] = (
 _QUOTES = "«»\"'“”„‟‘’"
 _INITIALS_RE = re.compile(r"\b([А-ЯЁ])\.\s*([А-ЯЁ])\.")
 _SPACE_RE = re.compile(r"\s+")
+
+
+def is_well_formed_name(stem: str, type_words: frozenset[str] = frozenset()) -> bool:
+    """Действительно ли имя аккуратное, а не небрежная пометка.
+
+    Осмысленности мало. «седой дом газ» суть отражает, но это сокращённая
+    пометка для себя: строчные буквы, ни вида документа, ни номера. Такое имя
+    лучше пересобрать по содержанию, сохранив его слова. А вот
+    «Постановление по делу Иванова» — уже готовое название, его трогать нельзя.
+
+    Имя считается аккуратным, если в нём назван вид документа либо оно
+    начинается с заглавной буквы и состоит не менее чем из трёх слов.
+    """
+    text = nfc(str(stem or "")).strip()
+    if not text or not is_meaningful_stem(text):
+        return False
+
+    key = comparison_key(text)
+    if any(word and word in key for word in type_words):
+        return True
+
+    words = [t for t in _TOKEN_SPLIT_RE.split(text) if sum(c.isalpha() for c in t) >= 3]
+    return text[0].isupper() and len(words) >= 3
 
 
 def is_meaningful_stem(stem: str) -> bool:
@@ -270,7 +297,9 @@ def format_person(entity: EntityRef) -> str:
         initials = initials or parts[1].replace(".", "")
         surname = parts[0]
     if initials:
-        return f"{surname}{SEPARATOR_CHAR}{initials}"
+        # Инициалы пишутся вплотную к фамилии: «ИвановИИ». Отдельный разделитель
+        # здесь только мешает — фамилия с инициалами читается как одно целое.
+        return f"{surname}{initials}"
     return surname
 
 
@@ -579,7 +608,16 @@ def build_filename(analysis: FileAnalysis, config: Config) -> tuple[str, list[st
         ``(имя, отброшенные_сегменты)``. Пустое имя означает, что осмысленное
         предложение построить не удалось.
     """
-    if config.naming.preserve_good_names and is_meaningful_stem(analysis.source_path.stem):
+    stem = analysis.source_path.stem
+    type_words = frozenset(
+        comparison_key(str(value))
+        for value in (analysis.metadata or {}).get("known_type_words", [])
+    )
+    if (
+        config.naming.preserve_good_names
+        and len(stem) <= MAX_PRESERVED_LENGTH
+        and is_well_formed_name(stem, type_words)
+    ):
         return build_preserved_name(analysis, config)
 
     segments = _dedupe_segments(

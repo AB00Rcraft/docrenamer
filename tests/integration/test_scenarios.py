@@ -112,7 +112,10 @@ def test_photo_without_exif_uses_filesystem_date_with_marker(
     assert analysis.has_status(Status.DATE_SOURCE_FILESYSTEM)
     assert analysis.document_date is not None
     assert analysis.document_date.source.value == "filesystem"
-    assert analysis.overall_confidence < config.naming.confidence_threshold
+    # Имя состоит из проверяемых фактов: вид файла и время файла, честно
+    # помеченное в manifest. Такой снимок переименовывать можно (раздел 65 ТЗ).
+    assert analysis.proposed_filename.startswith("Фото_")
+    assert analysis.overall_confidence >= config.naming.confidence_threshold
 
 
 def test_filesystem_date_fallback_can_be_disabled(

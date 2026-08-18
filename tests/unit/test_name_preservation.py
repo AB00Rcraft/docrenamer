@@ -256,3 +256,106 @@ def test_volumes_survive_apply_and_undo(
     assert report.manifest_path is not None
     app.undo(report.manifest_path)
     assert sorted(p.name for p in workdir.iterdir()) == ["scan_1.txt", "scan_2.txt"]
+
+
+# --- аккуратное имя против небрежной пометки --------------------------------
+
+
+@pytest.mark.parametrize(
+    ("stem", "preserve"),
+    [
+        ("Постановление по делу Иванова", True),
+        ("Договор займа №17 от 18 августа 2026 года", True),
+        ("Заметки по встрече с подрядчиком", True),
+        ("седой дом газ", False),
+        ("газ дом", False),
+        ("копия скана", False),
+        ("IMG_0032", False),
+    ],
+)
+def test_only_well_formed_names_are_preserved(stem: str, preserve: bool) -> None:
+    """Небрежная пометка для себя — не повод отказаться от переименования."""
+    from docrenamer.config import load_document_types
+    from docrenamer.naming.builder import is_well_formed_name
+    from docrenamer.textquality import comparison_key
+
+    type_words = frozenset(
+        comparison_key(entry["canonical_name"]) for entry in load_document_types()
+    )
+    assert is_well_formed_name(stem, type_words) is preserve
+
+
+def test_sloppy_name_is_rebuilt_but_its_words_survive(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """Слова прежнего имени не теряются: в них бывает суть, которой нет в тексте."""
+    (workdir / "седой дом газ.txt").write_bytes(
+        (
+            "СПРАВКА\n"
+            "об отключении газоснабжения\n"
+            "от 15 марта 2026 года\n"
+            "Выдана в том, что подача газа приостановлена.\n"
+            "АО «Мосгаз»\n"
+        ).encode()
+    )
+
+    app = Application(config, paths=app_paths)
+    item = app.preview(workdir).items[0]
+
+    assert item.proposed_filename.startswith("Справка_")
+    assert "седой_дом_газ" in item.proposed_filename
+    assert item.proposed_filename.endswith("_15.03.2026.txt")
+    assert item.selected
+
+
+def test_unreadable_file_is_not_renamed_by_its_own_name(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """У нечитаемого файла собственное имя ничего не подтверждает."""
+    (workdir / "прошивка станка.bin").write_bytes(bytes(range(256)) * 8)
+
+    app = Application(config, paths=app_paths)
+    item = app.preview(workdir).items[0]
+
+    assert item.proposed_filename in ("", "прошивка станка.bin")
+    assert not item.selected
+
+
+def test_initials_are_attached_to_surname(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """Инициалы пишутся вплотную: ИвановИИ."""
+    (workdir / "scan0007.txt").write_bytes(
+        (
+            "ПОСТАНОВЛЕНИЕ\n"
+            "о возбуждении исполнительного производства\n"
+            "от 27 июля 2026 года\n"
+            "Должник: Иванов И.И.\n"
+        ).encode()
+    )
+
+    app = Application(config, paths=app_paths)
+    item = app.preview(workdir).items[0]
+
+    assert "ИвановИИ" in item.proposed_filename
+    assert "Иванов_ИИ" not in item.proposed_filename
+
+
+def test_long_human_name_is_rebuilt_using_its_own_data(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """Слишком длинное имя пересобирается, а номер дела из него сохраняется."""
+    name = "Дело № А40-123456-2026 определение суда обезличенная копия от 15 марта 2026 года.txt"
+    (workdir / name).write_bytes(
+        "ОПРЕДЕЛЕНИЕ\nо принятии искового заявления к производству\n"
+        "Арбитражный суд города Москвы\n".encode()
+    )
+
+    app = Application(config, paths=app_paths)
+    item = app.preview(workdir).items[0]
+
+    assert item.proposed_filename.startswith("Определение_суда_")
+    assert "А40-123456-2026" in item.proposed_filename
+    assert "15.03.2026" in item.proposed_filename
+    assert len(item.proposed_filename) < len(name)
+    assert item.selected

@@ -321,7 +321,15 @@ class Pipeline:
                     confidence=0.95,
                 )
 
+        # Имя файла — тоже источник сведений: в нём часто есть номер дела и
+        # дата, особенно если файл выгружен из системы делопроизводства.
         date_candidates = extract_dates(text)
+        for candidate in extract_dates(filename):
+            candidate.source = Source.FILENAME
+            candidate.context = f"имя файла: {filename}"
+            candidate.confidence = min(candidate.confidence, 0.88)
+            if all(existing.value != candidate.value for existing in date_candidates):
+                date_candidates.append(candidate)
         analysis.candidates["dates"] = date_candidates[:10]
         # Приоритет раздела 41 ТЗ. Свойство «created» у DOCX/XLSX/PPTX — это
         # дата создания файла, а не дата документа: у шаблонов Office она
@@ -341,6 +349,14 @@ class Pipeline:
             )
 
         identifiers = extract_identifiers(text)
+        for kind, values in extract_identifiers(filename).items():
+            known = {c.value for c in identifiers.get(kind, [])}
+            for candidate in values:
+                if candidate.value in known:
+                    continue
+                candidate.source = Source.FILENAME
+                candidate.context = f"имя файла: {filename}"
+                identifiers.setdefault(kind, []).append(candidate)
         for kind, values in identifiers.items():
             analysis.candidates[kind] = values[:5]
         main_identifier = select_identifier(identifiers)
@@ -376,7 +392,12 @@ class Pipeline:
         if amounts:
             analysis.candidates["amounts"] = amounts[:5]
 
+        analysis.metadata["known_type_words"] = [
+            entry.canonical_name for entry in self.type_matcher.entries
+        ]
         subject = self._subject_for_document(analysis, text)
+        if subject is None:
+            subject = self._subject_from_filename(analysis)
         if subject is not None:
             analysis.subject = subject
         self._collect_evidence(analysis)
@@ -599,7 +620,7 @@ class Pipeline:
 
         moment = datetime.fromtimestamp(stat.st_mtime)
         value = (
-            moment.strftime("%Y-%m-%d_%H-%M-%S") if with_time else moment.strftime("%Y-%m-%d")
+            moment.strftime("%Y-%m-%d_%H.%M.%S") if with_time else moment.strftime("%Y-%m-%d")
         )
         analysis.add_status(Status.DATE_SOURCE_FILESYSTEM)
         return Candidate(
@@ -657,6 +678,39 @@ class Pipeline:
                     confidence=0.85,
                 )
         return None
+
+    def _subject_from_filename(self, analysis: FileAnalysis) -> Field | None:
+        """Использовать слова старого имени как предмет документа.
+
+        Пометка вроде «седой дом газ» несёт смысл, которого нет ни в тексте,
+        ни в реквизитах: адрес, о чём справка. Терять её при переименовании
+        нельзя, даже если само имя переписывается.
+        """
+        from docrenamer.naming.builder import clean_original_stem, is_meaningful_stem
+
+        # Слова прежнего имени идут в дело, только если документ действительно
+        # прочитан: у нечитаемого файла собственное имя ничего не подтверждает,
+        # и переименовывать его не за чем (раздел 92 ТЗ).
+        has_facts = (
+            analysis.document_type is not None and analysis.document_type.accepted
+        ) or bool(analysis.case_numbers) or (
+            analysis.document_number is not None and analysis.document_number.accepted
+        )
+        if not has_facts:
+            return None
+
+        stem = analysis.source_path.stem
+        if not is_meaningful_stem(stem):
+            return None
+        cleaned = clean_original_stem(stem)
+        if not cleaned:
+            return None
+        return Field(
+            value=cleaned[:60],
+            source=Source.FILENAME,
+            evidence=f"слова из прежнего имени файла: {stem}",
+            confidence=0.8,
+        )
 
     def _collect_evidence(self, analysis: FileAnalysis) -> None:
         """Сохранить подтверждения принятых значений (раздел 63 ТЗ)."""
@@ -727,6 +781,31 @@ def _person_from_address(raw: str) -> str:
     return value[:60]
 
 
+def media_confidence(analysis: FileAnalysis) -> float:
+    """Уверенность для фото, видео и аудио.
+
+    Имя медиафайла строится не из смысла текста, а из проверяемых фактов: вид
+    файла определён по сигнатуре, устройство и время съёмки взяты из
+    метаданных. Здесь нечего «угадать неверно», поэтому общая формула, которая
+    штрафует за отсутствие текстовых реквизитов, для медиа не подходит.
+
+    Время файловой системы понижает оценку, но не делает имя непригодным: оно
+    честно помечено в manifest (разделы 41, 65 ТЗ).
+    """
+    date = analysis.document_date
+    if date is None or not date.accepted:
+        return 0.4
+    if date.source is Source.FILESYSTEM:
+        score = 0.9
+    else:
+        score = 0.97
+    if analysis.metadata.get("device"):
+        score = min(0.99, score + 0.02)
+    if analysis.has_status(Status.MOJIBAKE_SUSPECTED):
+        score *= 0.6
+    return round(score, 4)
+
+
 def compute_confidence(analysis: FileAnalysis) -> float:
     """Итоговая уверенность (раздел 46 ТЗ).
 
@@ -734,6 +813,11 @@ def compute_confidence(analysis: FileAnalysis) -> float:
     предмета с учётом надёжности источника. Самооценка LLM отдельно не
     используется как единственный критерий.
     """
+    if analysis.category in (Category.IMAGE, Category.VIDEO, Category.AUDIO) and not (
+        analysis.subject is not None and analysis.subject.accepted
+    ):
+        return media_confidence(analysis)
+
     weights: list[tuple[float, float]] = []
 
     def add(value: float | None, weight: float, *, source: Source | None = None) -> None:

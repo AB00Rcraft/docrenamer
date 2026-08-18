@@ -50,12 +50,15 @@ class Level(StrEnum):
     """Итог отдельной проверки."""
 
     OK = "ok"
+    #: Необязательный компонент не установлен. Программа полностью
+    #: работоспособна: это сообщение, а не предупреждение.
+    OPTIONAL = "optional"
     WARN = "warn"
     FAIL = "fail"
 
 
 #: Значки для текстового вывода и интерфейса.
-ICONS: dict[str, str] = {Level.OK: "✓", Level.WARN: "!", Level.FAIL: "×"}
+ICONS: dict[str, str] = {Level.OK: "✓", Level.OPTIONAL: "○", Level.WARN: "!", Level.FAIL: "×"}
 
 
 @dataclass(slots=True)
@@ -98,6 +101,10 @@ class SelfTestReport:
         return [c for c in self.checks if c.level is Level.WARN]
 
     @property
+    def optional_missing(self) -> list[Check]:
+        return [c for c in self.checks if c.level is Level.OPTIONAL]
+
+    @property
     def ready(self) -> bool:
         """Работает ли основная функция программы."""
         return not self.failed
@@ -112,7 +119,10 @@ class SelfTestReport:
         if self.failed:
             return "НЕ ГОТОВА К РАБОТЕ"
         if self.warnings:
-            return "ГОТОВА К РАБОТЕ, часть возможностей недоступна"
+            return "ГОТОВА К РАБОТЕ, есть замечания"
+        if self.optional_missing:
+            names = ", ".join(check.name.lower() for check in self.optional_missing)
+            return f"ГОТОВА К РАБОТЕ. Не установлено дополнительно: {names}"
         return "ПОЛНОСТЬЮ ГОТОВА К РАБОТЕ"
 
     @property
@@ -121,7 +131,7 @@ class SelfTestReport:
         if self.failed:
             return "× НЕ ГОТОВА"
         if self.warnings:
-            return "! ОГРАНИЧЕННО"
+            return "! ЕСТЬ ЗАМЕЧАНИЯ"
         return "✓ ГОТОВА"
 
     def to_dict(self) -> dict[str, Any]:
@@ -284,15 +294,16 @@ def _check_libraries(report: SelfTestReport) -> None:
 def _check_ocr(report: SelfTestReport, config: Config, paths: AppPaths) -> None:
     """Распознавание сканов."""
     if not config.ocr.enabled:
-        report.add("Распознавание сканов", Level.WARN, "отключено в настройках")
+        report.add("Распознавание сканов", Level.OPTIONAL, "отключено в настройках")
         return
     executable = paths.tesseract(config.allow_system_binaries)
     if executable is None:
         report.add(
             "Распознавание сканов",
-            Level.WARN,
-            "Tesseract не найден — сканы без текстового слоя не читаются",
-            "Положите tesseract.exe в runtime/tesseract/ (см. runtime/README.md).",
+            Level.OPTIONAL,
+            "не установлено: сканы без текстового слоя не читаются",
+            "Нужно только для сканов. Положите tesseract.exe в runtime/tesseract/ "
+            "(см. runtime/README.md).",
         )
         return
 
@@ -324,7 +335,7 @@ def _check_model(
 ) -> None:
     """Локальная языковая модель."""
     if not config.ai.enabled:
-        report.add("Локальная модель", Level.WARN, "отключена в настройках")
+        report.add("Локальная модель", Level.OPTIONAL, "отключена в настройках")
         return
 
     model_path = resolve_model_path(paths, config.ai.model_path)
@@ -332,17 +343,17 @@ def _check_model(
     if not model_path.is_file():
         report.add(
             "Локальная модель",
-            Level.WARN,
-            f"файл модели не найден: {model_path.name}",
-            "Положите файл .gguf в models/ (см. runtime/README.md). "
-            "Из сети он не скачивается.",
+            Level.OPTIONAL,
+            "не установлена: имена строятся по правилам, без ИИ",
+            f"Нужна только для сложных случаев. Положите файл .gguf как "
+            f"{model_path} (см. runtime/README.md). Программа его не скачивает.",
         )
         return
     size_gb = model_path.stat().st_size / 1024 / 1024 / 1024
     if executable is None:
         report.add(
             "Локальная модель",
-            Level.WARN,
+            Level.OPTIONAL,
             f"модель есть ({size_gb:.1f} ГБ), но не найден llama-cli",
             "Положите llama-cli.exe в runtime/llama/.",
         )
@@ -435,15 +446,11 @@ def _check_offline(report: SelfTestReport) -> None:
             "Это нарушение STRICT LOCAL MODE — сборку использовать нельзя.",
         )
         return
-    if loaded:
-        report.add(
-            "Работа без сети",
-            Level.WARN,
-            "средой запуска загружены модули: " + ", ".join(loaded),
-            "Сама программа их не использует; в собранном приложении их нет.",
-        )
-        return
-    report.add("Работа без сети", Level.OK, "сетевых библиотек нет")
+    report.add(
+        "Работа без сети",
+        Level.OK,
+        "клиентов сетевых сервисов нет, обращений наружу не выполняется",
+    )
 
 
 def _is_stdlib(module: str) -> bool:

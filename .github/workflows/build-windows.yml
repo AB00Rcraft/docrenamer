@@ -93,6 +93,38 @@ jobs:
           python -m PyInstaller DocRenamer.spec --noconfirm
           --distpath dist/onefile --workpath build/onefile
 
+      - name: Вложить распознавание сканов
+        shell: pwsh
+        run: |
+          # Tesseract кладётся внутрь дистрибутива, чтобы сканы читались сразу,
+          # без ручной доустановки. Программа его не скачивает — он приезжает
+          # вместе со сборкой.
+          choco install tesseract --no-progress -y | Out-Null
+          $source = "C:\Program Files\Tesseract-OCR"
+          if (-not (Test-Path "$source\tesseract.exe")) { throw "Tesseract не установлен на агенте" }
+
+          $target = "dist/DocRenamer/runtime/tesseract"
+          New-Item -ItemType Directory -Force -Path "$target/tessdata" | Out-Null
+          Copy-Item "$source\*" $target -Recurse -Force -Exclude "tessdata"
+
+          # Языковые данные: быстрый набор, русский и английский (раздел 16 ТЗ).
+          $base = "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main"
+          foreach ($lang in @("rus", "eng", "osd")) {
+            Invoke-WebRequest "$base/$lang.traineddata" -OutFile "$target/tessdata/$lang.traineddata"
+          }
+
+          New-Item -ItemType Directory -Force -Path dist/DocRenamer/LICENSES | Out-Null
+          if (Test-Path "$source\LICENSE") {
+            Copy-Item "$source\LICENSE" "dist/DocRenamer/LICENSES/tesseract-Apache-2.0.txt" -Force
+          }
+
+          $env:TESSDATA_PREFIX = "$target/tessdata"
+          $languages = & "$target/tesseract.exe" --list-langs 2>&1 | Out-String
+          Write-Host $languages
+          if ($languages -notmatch "rus" -or $languages -notmatch "eng") {
+            throw "Языковые данные rus/eng не подхватились"
+          }
+
       - name: Дополнить portable-каталог
         shell: pwsh
         run: |
@@ -205,7 +237,11 @@ jobs:
             Поэтому не запускайте программу прямо из папки «Загрузки» — положите её в отдельную папку.
             Если вы ставили `DocRenamer-Setup.exe`, об этом думать не нужно: установщик всё разложил сам.
 
-            ## Если позже захотите распознавание сканов и локальную модель
+            Распознавание сканов (Tesseract, русский и английский) уже внутри установщика и
+            portable-архива — доустанавливать ничего не нужно. Отдельно скачанный
+            `DocRenamer.exe` работает без распознавания: ему нужен архив или установщик.
+
+            ## Если захотите локальную модель и дополнительные форматы
 
             Их нужно доложить **в ту же папку, где лежит программа**:
 
@@ -215,9 +251,7 @@ jobs:
             ├── models\
             │   └── document-model.gguf        локальная языковая модель
             └── runtime\
-                ├── tesseract\
-                │   ├── tesseract.exe          распознавание сканов
-                │   └── tessdata\rus.traineddata, eng.traineddata
+                ├── tesseract\                 уже вложено в сборку
                 ├── exiftool\exiftool.exe      RAW-фото и XMP
                 ├── ffmpeg\ffprobe.exe         AVI, MKV, WEBM
                 └── 7zip\7z.exe                просмотр 7Z и RAR

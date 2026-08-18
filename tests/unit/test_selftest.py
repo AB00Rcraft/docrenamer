@@ -35,23 +35,27 @@ def test_core_checks_pass_on_correct_build(report) -> None:
         assert check.level is Level.OK, f"{name}: {check.detail}"
 
 
-def test_missing_ocr_and_model_are_warnings_not_failures(
+def test_missing_ocr_and_model_are_optional_not_alarming(
     config: Config, app_paths: AppPaths
 ) -> None:
-    """Без OCR и модели программа работоспособна — это предупреждение."""
+    """Без OCR и модели программа полностью работоспособна.
+
+    Это сообщение о дополнительных возможностях, а не тревога: тревожный
+    значок в окне заставляет думать, что сборка неисправна.
+    """
     config.allow_system_binaries = False
     result = run_selftest(config, app_paths, probe_model=False)
 
     ocr = next(c for c in result.checks if c.name == "Распознавание сканов")
     model = next(c for c in result.checks if c.name == "Локальная модель")
 
-    assert ocr.level is Level.WARN
-    assert model.level is Level.WARN
+    assert ocr.level is Level.OPTIONAL
+    assert model.level is Level.OPTIONAL
     assert "runtime" in ocr.hint
-    assert "не скачивается" in model.hint
+    assert "не скачивает" in model.hint
     assert result.ready, "программа остаётся работоспособной"
-    assert not result.complete
-    assert result.badge.startswith("!")
+    assert result.badge.startswith("✓"), "значок не должен тревожить попусту"
+    assert "Не установлено дополнительно" in result.verdict
 
 
 def test_media_backends_work_without_external_tools(

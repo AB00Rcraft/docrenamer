@@ -76,6 +76,56 @@ LOCAL_ONLY_TOOLTIP = (
     "Все документы обрабатываются локально.\nСетевые AI API не используются."
 )
 
+#: Подсказки к элементам управления. Каждый элемент объясняет сам себя.
+TOOLTIPS: dict[str, str] = {
+    "choose": "Выбрать папку с документами.\nВложенные папки обрабатываются, "
+              "если включено «Включая подпапки».",
+    "folder": "Путь к папке с документами.\nМожно вписать вручную или вставить из буфера.",
+    "scan": "Посмотреть, какие файлы есть в папке.\n"
+            "Ничего не читает и не меняет — только считает файлы по типам.",
+    "preview": "Разобрать файлы и показать предлагаемые имена.\n"
+               "Файлы при этом не меняются.",
+    "apply": "Переименовать файлы по показанному плану.\n"
+             "Содержимое не меняется, контрольная сумма сверяется до и после.\n"
+             "Операцию можно отменить.",
+    "undo": "Вернуть прежние имена по записи предыдущей операции.\n"
+            "Файл, который изменился после переименования, не трогается.",
+    "stop": "Прекратить запуск новых задач.\n"
+            "Уже переименованные файлы остаются как есть — их можно отменить.",
+    "selftest": "Проверить, всё ли на месте: распознавание сканов, локальная модель,\n"
+                "чтение метаданных, и пройдёт ли разбор тестового документа.",
+    "logs": "Открыть папку с журналами работы.\n"
+            "В журнале видно, почему файл получил именно такое имя.",
+    "settings": "Порог уверенности, длина имени, формат даты,\n"
+                "использование распознавания и локальной модели.",
+    "updates": "Проверить, вышла ли новая версия.\n"
+               "Обновление выполняет отдельная программа: приложение,\n"
+               "которое читает документы, в сеть не выходит.",
+    "readiness": "Готовность комплекта. Нажмите «Самопроверка» для подробностей.",
+    "mode": "Анализ — только разобрать файлы.\n"
+            "Предпросмотр — показать предлагаемые имена.\n"
+            "Применить — переименовать по плану.",
+    "recursive": "Обрабатывать файлы и во вложенных папках.",
+    "table": "Список файлов. Пробел или двойной щелчок — включить или исключить строку.\n"
+             "Выберите строку, чтобы увидеть полные имена ниже.",
+    "details": "Полные имена выбранного файла и причина решения.",
+    "log": "Ход работы: что найдено, что предложено, что переименовано.",
+    # Настройки
+    "set_recursive": "Обрабатывать вложенные папки.",
+    "set_ai": "Использовать локальную языковую модель для сложных случаев.\n"
+              "Без неё имена строятся по правилам.",
+    "set_ocr": "Распознавать текст на сканах и фотографиях документов.\n"
+               "Требует локальный Tesseract.",
+    "set_exif": "Читать дату съёмки, модель камеры и координаты из фотографий.",
+    "set_media": "Читать дату съёмки и длительность из видео и аудио.",
+    "set_archives": "Читать список содержимого архивов. Архивы не распаковываются.",
+    "set_gps": "Добавлять координаты съёмки в имя фотографии.\n"
+               "Выключено по умолчанию: координаты — чувствительные данные.",
+    "set_threshold": "Насколько программа должна быть уверена, чтобы переименовать сама.\n"
+                     "Ниже порога файл показывается, но не переименовывается.",
+    "set_length": "Предельная длина имени файла в символах.",
+}
+
 
 class Tooltip:
     """Всплывающая подсказка для виджета."""
@@ -291,7 +341,7 @@ class DocRenamerGUI:
             header, textvariable=self.readiness_var, style="Muted.TLabel"
         )
         self.readiness_label.grid(row=0, column=1, sticky="e", padx=(PAD_M, PAD_L))
-        Tooltip(self.readiness_label, "Нажмите «Самопроверка», чтобы увидеть подробности.")
+        Tooltip(self.readiness_label, TOOLTIPS["readiness"])
 
         badge = ttk.Label(header, text="● LOCAL ONLY", style="Local.TLabel")
         badge.grid(row=0, column=2, sticky="e")
@@ -306,9 +356,12 @@ class DocRenamerGUI:
         self.directory_var = tk.StringVar(value=str(self.directory or ""))
         entry = ttk.Entry(toolbar, textvariable=self.directory_var, font=FONT_UI)
         entry.grid(row=0, column=1, sticky="ew", ipady=PAD_XS)
-        ttk.Button(
+        Tooltip(entry, TOOLTIPS["folder"])
+        choose = ttk.Button(
             toolbar, text="Выбрать", width=BUTTON_WIDTH, command=self._choose_directory
-        ).grid(row=0, column=2, sticky="e", padx=(PAD_M, 0))
+        )
+        choose.grid(row=0, column=2, sticky="e", padx=(PAD_M, 0))
+        Tooltip(choose, TOOLTIPS["choose"])
 
         modes = ttk.Frame(toolbar)
         modes.grid(row=1, column=0, columnspan=3, sticky="w", pady=(PAD_M, 0))
@@ -316,13 +369,15 @@ class DocRenamerGUI:
         for index, (value, label) in enumerate(
             (("analyze", "Анализ"), ("preview", "Предпросмотр"), ("apply", "Применить"))
         ):
-            ttk.Radiobutton(modes, text=label, value=value, variable=self.mode_var).grid(
-                row=0, column=index, sticky="w", padx=(0, PAD_L)
-            )
+            button = ttk.Radiobutton(modes, text=label, value=value, variable=self.mode_var)
+            button.grid(row=0, column=index, sticky="w", padx=(0, PAD_L))
+            Tooltip(button, TOOLTIPS["mode"])
         self.recursive_var = tk.BooleanVar(value=self.config.recursive)
-        ttk.Checkbutton(modes, text="Включая подпапки", variable=self.recursive_var).grid(
-            row=0, column=3, sticky="w"
+        recursive = ttk.Checkbutton(
+            modes, text="Включая подпапки", variable=self.recursive_var
         )
+        recursive.grid(row=0, column=3, sticky="w")
+        Tooltip(recursive, TOOLTIPS["recursive"])
 
     def _build_workspace(self) -> None:
         """Две колонки: список файлов и журнал."""
@@ -373,6 +428,7 @@ class DocRenamerGUI:
         self.tree.bind("<space>", self._toggle_selected)
         self.tree.bind("<Double-1>", self._toggle_selected)
         self.tree.bind("<<TreeviewSelect>>", self._show_details)
+        Tooltip(self.tree, TOOLTIPS["table"])
 
         # Подробности выбранной строки: длинные имена показываются целиком,
         # с переносом, а не обрезаются шириной колонки.
@@ -391,6 +447,7 @@ class DocRenamerGUI:
             state="disabled",
         )
         self.details.grid(row=0, column=0, sticky="ew")
+        Tooltip(self.details, TOOLTIPS["details"])
         self._set_details("Выберите файл в списке, чтобы увидеть подробности.")
 
         right = ttk.Frame(workspace, width=RIGHT_MIN_WIDTH)
@@ -420,6 +477,7 @@ class DocRenamerGUI:
             state="disabled",
         )
         self.log.grid(row=0, column=0, sticky="nsew")
+        Tooltip(self.log, TOOLTIPS["log"])
         log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log.yview)
         log_scroll.grid(row=0, column=1, sticky="ns")
         self.log.configure(yscrollcommand=log_scroll.set)
@@ -446,10 +504,12 @@ class DocRenamerGUI:
             actions, text="Сканировать", width=BUTTON_WIDTH, command=self._scan
         )
         self.scan_button.grid(row=0, column=0, sticky="w")
+        Tooltip(self.scan_button, TOOLTIPS["scan"])
         self.preview_button = ttk.Button(
             actions, text="Предпросмотр", width=BUTTON_WIDTH, command=self._preview
         )
         self.preview_button.grid(row=0, column=1, sticky="w", padx=(PAD_M, 0))
+        Tooltip(self.preview_button, TOOLTIPS["preview"])
         self.apply_button = ttk.Button(
             actions,
             text="Переименовать",
@@ -458,28 +518,33 @@ class DocRenamerGUI:
             command=self._apply,
         )
         self.apply_button.grid(row=0, column=2, sticky="w", padx=(PAD_M, 0))
+        Tooltip(self.apply_button, TOOLTIPS["apply"])
         self.undo_button = ttk.Button(
             actions, text="Отменить", width=BUTTON_WIDTH, command=self._undo
         )
         self.undo_button.grid(row=0, column=3, sticky="w", padx=(PAD_M, 0))
+        Tooltip(self.undo_button, TOOLTIPS["undo"])
         self.stop_button = ttk.Button(
             actions, text="Стоп", width=BUTTON_WIDTH, command=self._stop, state="disabled"
         )
         self.stop_button.grid(row=0, column=4, sticky="w", padx=(PAD_M, 0))
+        Tooltip(self.stop_button, TOOLTIPS["stop"])
 
-        ttk.Button(
-            actions, text="Самопроверка", width=BUTTON_WIDTH, command=self._selftest
-        ).grid(row=0, column=5, sticky="e", padx=(PAD_M, 0))
-        ttk.Button(
-            actions, text="Журнал", width=BUTTON_WIDTH, command=self._open_logs
-        ).grid(row=0, column=6, sticky="e", padx=(PAD_M, 0))
-        ttk.Button(
-            actions, text="Настройки", width=BUTTON_WIDTH, command=self._open_settings
-        ).grid(row=0, column=7, sticky="e", padx=(PAD_M, 0))
+        service = (
+            ("Самопроверка", self._selftest, "selftest", 5),
+            ("Журнал", self._open_logs, "logs", 6),
+            ("Настройки", self._open_settings, "settings", 7),
+        )
+        for text, command, key, column in service:
+            button = ttk.Button(actions, text=text, width=BUTTON_WIDTH, command=command)
+            button.grid(row=0, column=column, sticky="e", padx=(PAD_M, 0))
+            Tooltip(button, TOOLTIPS[key])
         if self.config.update.enabled:
-            ttk.Button(
+            updates = ttk.Button(
                 actions, text="Обновления", width=BUTTON_WIDTH, command=self._check_updates
-            ).grid(row=0, column=8, sticky="e", padx=(PAD_M, 0))
+            )
+            updates.grid(row=0, column=8, sticky="e", padx=(PAD_M, 0))
+            Tooltip(updates, TOOLTIPS["updates"])
 
     def _set_details(self, text: str) -> None:
         """Показать подробности выбранного файла."""
@@ -910,25 +975,31 @@ class SettingsDialog:
         self.inspect_archives = tk.BooleanVar(value=True)
         self.include_gps = tk.BooleanVar(value=config.media.include_gps_coordinates)
 
-        for text, variable in (
-            ("Рекурсивно", self.recursive),
-            ("Использовать локальный ИИ", self.use_ai),
-            ("OCR для сканов", self.use_ocr),
-            ("Обрабатывать фото", self.use_exif),
-            ("Обрабатывать видео/аудио", self.use_ffprobe),
-            ("Анализировать архивы без распаковки", self.inspect_archives),
-            ("Включать координаты GPS в имя", self.include_gps),
+        for text, variable, key in (
+            ("Включая подпапки", self.recursive, "set_recursive"),
+            ("Использовать локальную модель", self.use_ai, "set_ai"),
+            ("Распознавать сканы", self.use_ocr, "set_ocr"),
+            ("Читать метаданные фотографий", self.use_exif, "set_exif"),
+            ("Читать метаданные видео и аудио", self.use_ffprobe, "set_media"),
+            ("Читать список содержимого архивов", self.inspect_archives, "set_archives"),
+            ("Добавлять координаты в имя фотографии", self.include_gps, "set_gps"),
         ):
-            ttk.Checkbutton(frame, text=text, variable=variable).pack(anchor="w", pady=2)
+            box = ttk.Checkbutton(frame, text=text, variable=variable)
+            box.pack(anchor="w", pady=PAD_XS)
+            Tooltip(box, TOOLTIPS[key])
 
         grid = ttk.Frame(frame)
         grid.pack(fill="x", pady=(10, 4))
         ttk.Label(grid, text="Порог уверенности:").grid(row=0, column=0, sticky="w")
         self.threshold = tk.StringVar(value=f"{config.naming.confidence_threshold:.2f}")
-        ttk.Entry(grid, textvariable=self.threshold, width=8).grid(row=0, column=1, padx=8)
+        threshold_entry = ttk.Entry(grid, textvariable=self.threshold, width=8)
+        threshold_entry.grid(row=0, column=1, padx=PAD_M)
+        Tooltip(threshold_entry, TOOLTIPS["set_threshold"])
         ttk.Label(grid, text="Максимальная длина имени:").grid(row=1, column=0, sticky="w")
         self.max_length = tk.StringVar(value=str(config.naming.max_filename_length))
-        ttk.Entry(grid, textvariable=self.max_length, width=8).grid(row=1, column=1, padx=8)
+        length_entry = ttk.Entry(grid, textvariable=self.max_length, width=8)
+        length_entry.grid(row=1, column=1, padx=PAD_M)
+        Tooltip(length_entry, TOOLTIPS["set_length"])
 
         model = self.paths.models_dir / Path(config.ai.model_path).name
         ttk.Label(frame, text="Модель:", style="Muted.TLabel").pack(anchor="w", pady=(10, 0))
