@@ -23,13 +23,18 @@ def hidden_process_options() -> dict[str, Any]:
     """
     if os.name != "nt":
         return {}
-    startup = subprocess.STARTUPINFO()
-    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    startup.wShowWindow = subprocess.SW_HIDE
-    return {
-        "startupinfo": startup,
-        "creationflags": subprocess.CREATE_NO_WINDOW,
-    }
+    # Атрибуты существуют только в Windows, поэтому берутся через getattr:
+    # иначе проверка типов на других системах видит отсутствующие имена.
+    startupinfo_class = getattr(subprocess, "STARTUPINFO", None)
+    hide_flag = getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+    hide_window = getattr(subprocess, "SW_HIDE", 0)
+    no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if startupinfo_class is None:
+        return {}
+    startup = startupinfo_class()
+    startup.dwFlags |= hide_flag
+    startup.wShowWindow = hide_window
+    return {"startupinfo": startup, "creationflags": no_window}
 
 
 @dataclass(frozen=True, slots=True)
