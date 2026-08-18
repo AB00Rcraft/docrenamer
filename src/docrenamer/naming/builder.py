@@ -15,6 +15,7 @@ import re
 from docrenamer.config import Config
 from docrenamer.extractors.dates import extract_dates
 from docrenamer.naming.dates import date_variants, format_date_for_name
+from docrenamer.naming.review import is_blocking, review_name, review_segments
 from docrenamer.naming.sanitizer import (
     MAX_FILENAME_BYTES,
     SEPARATOR_CHAR,
@@ -613,7 +614,11 @@ def _dedupe_segments(segments: list[Segment]) -> list[Segment]:
 
 
 def build_filename(analysis: FileAnalysis, config: Config) -> tuple[str, list[str]]:
-    """Построить имя файла.
+    """Построить имя файла в два прохода.
+
+    Первый проход собирает имя из найденных фактов. Второй перечитывает
+    результат независимыми проверками и либо убирает лишнее, либо отказывается
+    от имени: показать прежнее имя честнее, чем неверное новое (раздел 92 ТЗ).
 
     Returns:
         ``(имя, отброшенные_сегменты)``. Пустое имя означает, что осмысленное
@@ -622,6 +627,13 @@ def build_filename(analysis: FileAnalysis, config: Config) -> tuple[str, list[st
     segments = _dedupe_segments(
         [s for s in build_segments(analysis, config) if sanitize_component(s.text)]
     )
+    # Второй проход, шаг первый: убрать сегменты, которым в имени не место.
+    segments, issues = review_segments(segments)
+    if issues:
+        analysis.metadata["name_review"] = [
+            {"code": issue.code, "message": issue.message, "value": issue.segment}
+            for issue in issues
+        ]
     segments = _limit_segments(_order_segments(segments, config), config)
     if not any(segment.kind in INFORMATIVE_KINDS for segment in segments):
         # Предложить нечего. Если человек уже дал имя — оставляем его, добавив
@@ -636,4 +648,21 @@ def build_filename(analysis: FileAnalysis, config: Config) -> tuple[str, list[st
         separator=config.naming.separator,
         max_length=config.naming.max_filename_length,
     )
+
+    # Второй проход, шаг второй: перечитать готовое имя целиком.
+    expected_date = _date_value(analysis, config)
+    problems = review_name(
+        name,
+        max_length=config.naming.max_filename_length,
+        expected_date=expected_date.split("_")[0] if expected_date else "",
+    )
+    if problems:
+        analysis.metadata.setdefault("name_review", [])
+        analysis.metadata["name_review"] = list(analysis.metadata["name_review"]) + [
+            {"code": issue.code, "message": issue.message, "value": issue.segment}
+            for issue in problems
+        ]
+    if is_blocking(problems):
+        analysis.add_status(Status.NAME_REVIEW_FAILED)
+        return "", dropped
     return name, dropped

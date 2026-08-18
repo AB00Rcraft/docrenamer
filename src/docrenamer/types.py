@@ -64,6 +64,7 @@ class Status(StrEnum):
     NAME_UNCHANGED = "NAME_UNCHANGED"
     ORIGINAL_NAME_PRESERVED = "ORIGINAL_NAME_PRESERVED"
     GOOD_NAME_KEPT = "GOOD_NAME_KEPT"
+    NAME_REVIEW_FAILED = "NAME_REVIEW_FAILED"
     SERIES_PART_DETECTED = "SERIES_PART_DETECTED"
     AI_DISABLED = "AI_DISABLED"
     AI_NOT_NEEDED = "AI_NOT_NEEDED"
@@ -116,6 +117,9 @@ STATUS_DESCRIPTIONS_RU: dict[str, str] = {
     Status.NAME_UNCHANGED: "Предложенное имя совпадает с текущим.",
     Status.ORIGINAL_NAME_PRESERVED: (
         "Имя уже осмысленное — оно сохранено, добавлена только дата."
+    ),
+    Status.NAME_REVIEW_FAILED: (
+        "Построенное имя не прошло самопроверку — файл оставлен как есть."
     ),
     Status.GOOD_NAME_KEPT: (
         "Имя уже хорошее. Вариант предложен, но по умолчанию файл не "

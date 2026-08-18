@@ -7,7 +7,7 @@
 ; Сборка: ISCC.exe installer\DocRenamer.iss
 
 #define AppName "Переименователь документов"
-#define AppVersion "1.0.9"
+#define AppVersion "1.1.0"
 #define AppPublisher "DocRenamer"
 #define AppExeName "DocRenamer.exe"
 
