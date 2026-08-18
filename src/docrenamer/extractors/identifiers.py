@@ -40,6 +40,10 @@ INN_RE = re.compile(r"\bИНН[\s:]*([0-9]{10}|[0-9]{12})\b")
 OGRN_RE = re.compile(r"\bОГРН(?:ИП)?[\s:]*([0-9]{13}|[0-9]{15})\b")
 KPP_RE = re.compile(r"\bКПП[\s:]*([0-9]{9})\b")
 
+#: Значение, похожее на дату: 11.83.2026, 25.11.2024. Номером документа быть
+#: не может — иначе в имени оказываются две даты, одна из них неверная.
+DATE_LIKE_RE = re.compile(r"^\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4}$|^\d{4}-\d{2}-\d{2}$")
+
 #: Исполнительный лист: серия ФС № 012345678.
 WRIT_RE = re.compile(r"\b(?:сери[яи]\s*)?(ФС|ВС|АС)\s*№?\s*(\d{6,12})\b")
 
@@ -55,6 +59,9 @@ def _add(
 ) -> None:
     value = value.strip().strip(".,;")
     if not value:
+        return
+    if kind in ("document_number", "contract_number") and DATE_LIKE_RE.match(value):
+        # Это дата, а не номер: она попадёт в имя как дата.
         return
     key = f"{kind}:{value.casefold()}"
     candidate = Candidate(

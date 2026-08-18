@@ -71,6 +71,16 @@ def _open(url: str, timeout: int = TIMEOUT_SECONDS) -> Any:
             request, timeout=timeout, context=context
         )
     except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise UpdateError(
+                "Обновления недоступны: источник закрыт или в нём ещё нет выпусков. "
+                "Проверьте параметр update.repository в config.json."
+            ) from exc
+        if exc.code in (401, 403):
+            raise UpdateError(
+                "Источник обновлений требует авторизации — автоматическое обновление "
+                "недоступно. Скачайте новую версию вручную."
+            ) from exc
         raise UpdateError(f"Сервер обновлений ответил ошибкой {exc.code}.") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise UpdateError(f"Не удалось связаться с сервером обновлений: {exc}") from exc

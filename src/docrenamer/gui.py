@@ -25,6 +25,7 @@ from docrenamer.logging.manifest import find_incomplete_sessions
 from docrenamer.operations.planner import RenamePlan
 from docrenamer.paths import AppPaths, default_paths
 from docrenamer.presentation import format_plan_row, progress_label, row_tag
+from docrenamer.security.subprocess_safe import hidden_process_options
 
 #: Тёмная нейтральная палитра с одним акцентным цветом.
 COLORS = {
@@ -71,6 +72,11 @@ WINDOW_WIDTH = 1180
 WINDOW_HEIGHT = 720
 WINDOW_MIN_WIDTH = 940
 WINDOW_MIN_HEIGHT = 600
+
+#: Название программы для человека. Латинское DocRenamer остаётся именем
+#: файлов и репозитория, но в глаза пользователю смотрит русское.
+APP_TITLE = "Переименователь документов"
+APP_SUBTITLE = "работает без Интернета"
 
 LOCAL_ONLY_TOOLTIP = (
     "Все документы обрабатываются локально.\nСетевые AI API не используются."
@@ -184,7 +190,7 @@ class DocRenamerGUI:
         )
 
         self.root = tk.Tk()
-        self.root.title(f"DocRenamer Offline {__version__}")
+        self.root.title(f"{APP_TITLE} {__version__}")
         self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.root.minsize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         self.root.configure(bg=COLORS["bg"])
@@ -201,6 +207,16 @@ class DocRenamerGUI:
             self.root.after(1500, self._check_updates)
 
     # --- построение интерфейса --------------------------------------------
+
+    def _load_logo(self) -> tk.PhotoImage | None:
+        """Знак программы для заголовка окна."""
+        path = self.paths.assets_dir / "logo40.png"
+        if not path.is_file():
+            return None
+        try:
+            return tk.PhotoImage(file=str(path))
+        except tk.TclError:
+            return None
 
     def _set_window_icon(self) -> None:
         """Поставить фирменный значок окна.
@@ -345,15 +361,26 @@ class DocRenamerGUI:
         self._build_status()
         self._build_actions()
 
-        self._log(f"DocRenamer Offline {__version__}. Все данные обрабатываются локально.")
+        self._log(f"{APP_TITLE} {__version__}. Все данные обрабатываются локально.")
 
     def _build_header(self) -> None:
         header = ttk.Frame(self.root, padding=(PAD_L, PAD_M, PAD_L, PAD_S))
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
 
-        ttk.Label(header, text="DocRenamer Offline", style="Title.TLabel").grid(
-            row=0, column=0, sticky="w"
+        # Знак и название программы.
+        title_block = ttk.Frame(header)
+        title_block.grid(row=0, column=0, sticky="w")
+        self._logo_image = self._load_logo()
+        if self._logo_image is not None:
+            ttk.Label(title_block, image=self._logo_image, background=COLORS["bg"]).grid(
+                row=0, column=0, rowspan=2, sticky="w", padx=(0, PAD_M)
+            )
+        ttk.Label(title_block, text=APP_TITLE, style="Title.TLabel").grid(
+            row=0, column=1, sticky="w"
+        )
+        ttk.Label(title_block, text=APP_SUBTITLE, style="Muted.TLabel").grid(
+            row=1, column=1, sticky="w"
         )
 
         self.readiness_var = tk.StringVar(value="… проверка готовности")
@@ -821,7 +848,12 @@ class DocRenamerGUI:
         def work() -> None:
             try:
                 completed = subprocess.run(  # noqa: S603 — список аргументов, без оболочки
-                    command, shell=False, capture_output=True, timeout=120, check=False
+                    command,
+                    shell=False,
+                    capture_output=True,
+                    timeout=120,
+                    check=False,
+                    **hidden_process_options(),
                 )
             except (OSError, subprocess.SubprocessError) as exc:
                 self.events.put(("error", f"Проверка обновлений не выполнена: {exc}"))
@@ -866,7 +898,9 @@ class DocRenamerGUI:
         if command is None:
             return
         try:
-            subprocess.Popen(command, shell=False, close_fds=True)  # noqa: S603
+            subprocess.Popen(  # noqa: S603
+                command, shell=False, close_fds=True, **hidden_process_options()
+            )
         except (OSError, subprocess.SubprocessError) as exc:
             messagebox.showerror("Обновления", f"Не удалось запустить обновление: {exc}")
             return

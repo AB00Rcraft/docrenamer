@@ -258,3 +258,25 @@ def test_cli_survives_network_failure(
 
     assert code == cli.EXIT_ERROR
     assert "Не удалось проверить обновления" in capsys.readouterr().err
+
+
+def test_closed_source_reports_understandable_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Закрытый репозиторий отвечает 404 — пользователю нужен понятный текст."""
+    import urllib.error
+
+    from docrenamer_updater import client
+
+    def raising(request: object, **kwargs: object) -> None:
+        raise urllib.error.HTTPError(
+            "https://api.github.com", 404, "Not Found", {}, None  # type: ignore[arg-type]
+        )
+
+    monkeypatch.setattr(client.urllib.request, "urlopen", raising)
+
+    with pytest.raises(UpdateError) as exc:
+        client.fetch_latest("owner/private")
+
+    assert "закрыт" in str(exc.value)
+    assert "404" not in str(exc.value)

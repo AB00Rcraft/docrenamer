@@ -102,6 +102,8 @@ def main() -> None:
     icon_images[-1].save(icon_path, format="ICO", sizes=[(s, s) for s in ICON_SIZES])
 
     draw_logo(256).save(ROOT / "logo.png")
+    for size in (32, 40, 48, 64):
+        draw_logo(size).save(ROOT / f"logo{size}.png")
     draw_logo(512).save(ROOT / "logo@512.png")
     draw_logo(128, tile=False).save(ROOT / "logo-mark.png")
 

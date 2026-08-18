@@ -7,9 +7,29 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+
+def hidden_process_options() -> dict[str, Any]:
+    """Параметры запуска без появления консольного окна.
+
+    В Windows каждый запуск консольной программы открывает чёрное окно. При
+    обработке сотни файлов оно мигнёт сто раз. Программы запускаются скрыто:
+    их вывод программа читает сама.
+    """
+    if os.name != "nt":
+        return {}
+    startup = subprocess.STARTUPINFO()
+    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startup.wShowWindow = subprocess.SW_HIDE
+    return {
+        "startupinfo": startup,
+        "creationflags": subprocess.CREATE_NO_WINDOW,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +67,7 @@ def run_tool(
             check=False,
             input=input_bytes,
             cwd=str(cwd) if cwd else None,
+            **hidden_process_options(),
         )
     except FileNotFoundError:
         return ToolResult(False, -1, "", "", error=f"Программа не найдена: {executable}")

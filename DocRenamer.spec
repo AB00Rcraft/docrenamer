@@ -31,6 +31,7 @@ datas = [
     (str(PROJECT_ROOT / "config" / "config.json"), "config"),
     (str(PROJECT_ROOT / "assets" / "icon.ico"), "assets"),
     (str(PROJECT_ROOT / "assets" / "logo.png"), "assets"),
+    (str(PROJECT_ROOT / "assets" / "logo40.png"), "assets"),
     (str(PROJECT_ROOT / "config" / "document_types.json"), "config"),
     (str(PROJECT_ROOT / "README.md"), "."),
     (str(PROJECT_ROOT / "THIRD_PARTY_NOTICES.md"), "."),

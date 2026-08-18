@@ -210,6 +210,23 @@ class Segment:
     kind: str = ""
 
 
+def capitalize_first(name: str) -> str:
+    """Сделать первую букву имени заглавной.
+
+    Имя файла, начинающееся со строчной буквы («купли-продажи_…»), выглядит
+    обрывком фразы. Остальные буквы не трогаются: «ООО», «ИвановИИ» и
+    аббревиатуры должны остаться как есть.
+    """
+    for index, char in enumerate(name):
+        if char.isalpha():
+            if char.islower():
+                return name[:index] + char.upper() + name[index + 1 :]
+            return name
+        if char.isdigit():
+            return name
+    return name
+
+
 def assemble_filename(
     segments: list[Segment],
     extension: str,
@@ -268,4 +285,4 @@ def assemble_filename(
             lowercase_extension=lowercase_extension,
         ), dropped
 
-    return build(cleaned), dropped
+    return capitalize_first(build(cleaned)), dropped

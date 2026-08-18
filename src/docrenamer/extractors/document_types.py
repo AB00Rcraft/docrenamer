@@ -35,6 +35,14 @@ WEIGHT_FILENAME = 0.55        # совпадение только по имен�
 #: в тексте недостаточно, чтобы назвать презентацию определением суда.
 MIN_TYPE_CONFIDENCE = 0.6
 
+#: Исключение: документ начинается с названия своего вида. Текстовый слой PDF
+#: часто приходит одним сплошным абзацем без переводов строк — заголовок тогда
+#: не распознать по форме. Но если документ буквально открывается словом
+#: «ДОГОВОР», это и есть его вид. Допуск в пару символов — на кавычки и
+#: типографский мусор в начале.
+OPENING_WORD_CHARS = 2
+OPENING_WORD_CONFIDENCE = 0.7
+
 
 @dataclass(slots=True)
 class DocumentTypeEntry:
@@ -211,4 +219,16 @@ def select_document_type(candidates: list[Candidate]) -> Candidate | None:
     if not candidates:
         return None
     best = candidates[0]
-    return best if best.confidence >= MIN_TYPE_CONFIDENCE else None
+    if best.confidence >= MIN_TYPE_CONFIDENCE:
+        return best
+    if 0 <= best.position < OPENING_WORD_CHARS:
+        return Candidate(
+            value=best.value,
+            position=best.position,
+            context=best.context,
+            source=best.source,
+            role_guess=best.role_guess,
+            confidence=OPENING_WORD_CONFIDENCE,
+            kind=best.kind,
+        )
+    return None
