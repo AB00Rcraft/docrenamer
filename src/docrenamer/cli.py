@@ -59,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="подробный вывод")
     parser.add_argument("--gui", action="store_true", help="запустить графический интерфейс")
     parser.add_argument(
+        "--selftest",
+        action="store_true",
+        help="проверить готовность программы: OCR, локальная модель, разбор документа",
+    )
+    parser.add_argument(
         "--wizard",
         action="store_true",
         help="пошаговый диалог в текстовом окне (для переносимой сборки)",
@@ -211,6 +216,13 @@ def main(argv: list[str] | None = None) -> int:
         config.recursive = True
     if args.no_recursive:
         config.recursive = False
+
+    if args.selftest:
+        from docrenamer.selftest import run_selftest
+
+        selftest_report = run_selftest(config, paths)
+        print(selftest_report.format_text())
+        return EXIT_OK if selftest_report.ready else EXIT_ERROR
 
     directory = _resolve_directory(args)
 

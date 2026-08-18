@@ -120,8 +120,22 @@ def extract_organizations(text: str) -> list[Candidate]:
 
 
 def select_organizations(candidates: list[Candidate], limit: int = 2) -> list[EntityRef]:
-    """Выбрать организации для имени файла."""
-    ordered = sorted(candidates, key=lambda c: (-c.confidence, c.position))[:limit]
+    """Выбрать организации для имени файла.
+
+    Из иерархии одного ведомства берётся только самое конкретное подразделение:
+    «Алтуфьевский ОСП» и «ГУФССП России по г. Москве» — это один и тот же орган,
+    и обе строки в имени файла не нужны.
+    """
+    ranked = sorted(candidates, key=lambda c: (-c.confidence, c.position))
+    filtered: list[Candidate] = []
+    authorities_seen = False
+    for candidate in ranked:
+        if candidate.kind == "authority":
+            if authorities_seen:
+                continue
+            authorities_seen = True
+        filtered.append(candidate)
+    ordered = filtered[:limit]
     return [
         EntityRef(
             name=c.value,

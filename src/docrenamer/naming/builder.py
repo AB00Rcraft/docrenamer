@@ -14,6 +14,7 @@ import re
 
 from docrenamer.config import Config
 from docrenamer.extractors.dates import extract_dates
+from docrenamer.naming.dates import date_variants, format_date_for_name
 from docrenamer.naming.sanitizer import (
     MAX_FILENAME_BYTES,
     Segment,
@@ -22,7 +23,7 @@ from docrenamer.naming.sanitizer import (
     sanitize_filename,
 )
 from docrenamer.textquality import comparison_key
-from docrenamer.types import Category, EntityRef, Field, FileAnalysis, Source, nfc
+from docrenamer.types import Category, EntityRef, Field, FileAnalysis, Source, Status, nfc
 
 #: Слова, которые не делают имя осмысленным.
 GENERIC_STEM_RE = re.compile(
@@ -77,6 +78,17 @@ FILLER_TOKENS: frozenset[str] = frozenset(
         "doc", "новый", "новая", "new", "стр", "страница", "page", "видео", "video",
     }
 )
+
+#: Сколько участников попадает в имя. Два — предел читаемости.
+MAX_ENTITIES_IN_NAME = 2
+
+#: Порядок сегментов в имени файла.
+#:
+#: ``type-first`` — сначала вид документа и предмет, дата в конце. Так файлы
+#: удобно сортировать по имени: одинаковые документы оказываются рядом.
+#: ``date-first`` — сначала дата. Полезно вместе с форматом ``YYYY-MM-DD``,
+#: когда нужен хронологический порядок.
+NAME_ORDERS: frozenset[str] = frozenset({"type-first", "date-first"})
 
 #: Приоритеты сегментов: чем выше, тем позже сегмент будет отброшен при
 #: нехватке длины (раздел 45 ТЗ).
@@ -147,6 +159,12 @@ def is_meaningful_stem(stem: str) -> bool:
     ]
     if not words:
         return False
+    # Профиль RUSSIAN-FIRST: авторское имя почти всегда содержит кириллицу.
+    # Латинское имя без пробелов («vaccine_deck», «final_v2») — это, как
+    # правило, служебное имя выгрузки, а не название документа.
+    has_cyrillic = any("а" <= ch.lower() <= "я" or ch.lower() == "ё" for ch in text)
+    if not has_cyrillic and " " not in text:
+        return False
     if len(words) >= 2:
         return True
     return len(words[0]) >= SINGLE_WORD_LENGTH
@@ -162,16 +180,20 @@ def build_preserved_name(analysis: FileAnalysis, config: Config) -> tuple[str, l
     """
     original = analysis.source_path.stem
     unchanged = analysis.source_path.name
-    date_value = _value(analysis.document_date)
-    if not date_value:
+    canonical = _value(analysis.document_date)
+    if not canonical:
         return unchanged, []
+    date_value = format_date_for_name(canonical, config.naming.date_format)
 
     # Дата уже в имени — в любом виде, хоть «18 августа 2026 года».
     existing = {c.value for c in extract_dates(original)}
-    if date_value in existing or date_value[:10] in original:
+    if canonical in existing or any(variant in original for variant in date_variants(canonical)):
         return unchanged, []
     if analysis.document_date is not None and analysis.document_date.source is Source.FILESYSTEM:
         # Дата из файловой системы не повод трогать хорошее имя.
+        return unchanged, []
+    if analysis.has_status(Status.DATE_SOURCE_FILE_PROPERTY):
+        # И тем более не повод — дата создания файла из свойств Office.
         return unchanged, []
 
     stem = sanitize_component(original, keep_spaces=True)
@@ -179,8 +201,12 @@ def build_preserved_name(analysis: FileAnalysis, config: Config) -> tuple[str, l
         return unchanged, []
 
     separator = config.naming.separator
+    if config.naming.order == "date-first":
+        combined = f"{date_value}{separator}{stem}"
+    else:
+        combined = f"{stem}{separator}{date_value}"
     name = sanitize_filename(
-        f"{date_value}{separator}{stem}",
+        combined,
         analysis.source_path.suffix,
         max_length=config.naming.max_filename_length,
         max_bytes=MAX_FILENAME_BYTES,
@@ -271,11 +297,12 @@ def _entities_segment(
                 break
         return result
 
+    # Человек в документе важнее организации: именно по фамилии файл ищут.
     parts = [
-        *unique(orgs, config.naming.max_organizations_in_filename),
         *unique(people, config.naming.max_persons_in_filename),
+        *unique(orgs, config.naming.max_organizations_in_filename),
     ]
-    return "--".join(parts)
+    return "--".join(parts[:MAX_ENTITIES_IN_NAME])
 
 
 def _value(field: Field | None) -> str:
@@ -285,10 +312,25 @@ def _value(field: Field | None) -> str:
     return str(field.value)
 
 
+def _date_value(analysis: FileAnalysis, config: Config) -> str:
+    """Дата документа в том виде, в котором она попадёт в имя файла.
+
+    Дата из свойств файла в имя не выносится: у шаблонов Office свойство
+    «created» фиктивно (2013 год), и такая дата в имени вводит в заблуждение.
+    В анализе и в manifest она сохраняется — с пометкой источника.
+    """
+    value = _value(analysis.document_date)
+    if not value:
+        return ""
+    if analysis.has_status(Status.DATE_SOURCE_FILE_PROPERTY):
+        return ""
+    return format_date_for_name(value, config.naming.date_format)
+
+
 def _document_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     """Сегменты для документов: DATE__TYPE__SUBJECT__ENTITIES__IDENTIFIER."""
     segments: list[Segment] = []
-    date_value = _value(analysis.document_date)
+    date_value = _date_value(analysis, config)
     if date_value:
         segments.append(Segment(date_value, PRIORITY_DATE, droppable=False, kind="date"))
 
@@ -314,14 +356,57 @@ def _document_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     return segments
 
 
+#: Дата и время внутри имени файла: 2024-06-04, 20240604, 22-41-34, 224134123.
+_STEM_DATE_RE = re.compile(
+    r"(?:19|20)\d{2}[-_.]?\d{2}[-_.]?\d{2}"       # 2024-06-04, 20240604
+    r"|\d{2}[-_.]\d{2}[-_.](?:19|20)\d{2}"        # 04.06.2024
+    r"|\d{2}[-_.]\d{2}[-_.]\d{2}(?:[-_.]?\d{1,3})?"  # 22-41-34, 22-41-34-123
+)
+
+#: Что остаётся от имени после удаления даты: длинные числовые хвосты не нужны.
+_STEM_DIGITS_RE = re.compile(r"^\d{5,}$")
+
+
+def clean_original_stem(stem: str) -> str:
+    """Очистить исходное имя от даты и служебных слов.
+
+    Имена вида ``photo_2024-06-04_22-41-34`` целиком состоят из даты, которая
+    и так стоит в начале нового имени. Дублировать её — да ещё в другом
+    порядке — бессмысленно. А короткий серийный номер вроде ``IMG_7834``
+    сохранить полезно: по нему файл узнаётся среди других снимков.
+    """
+    text = _STEM_DATE_RE.sub(" ", nfc(str(stem or "")))
+    parts: list[str] = []
+    for token in _TOKEN_SPLIT_RE.split(text):
+        token = token.strip()
+        if not token:
+            continue
+        if comparison_key(token) in FILLER_TOKENS:
+            continue
+        if _STEM_DIGITS_RE.match(token):
+            continue
+        parts.append(token)
+    if not parts:
+        return ""
+    # Отдельно стоящие короткие числа осмысленны только рядом с буквами
+    # (IMG 7834), сами по себе — нет.
+    if all(part.isdigit() for part in parts):
+        return ""
+    return "-".join(parts)
+
+
 def _media_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     """Сегменты для фото, видео и аудио (разделы 27, 28, 29 ТЗ)."""
     segments: list[Segment] = []
     meta = analysis.metadata or {}
 
-    date_value = _value(analysis.document_date)
+    date_value = _date_value(analysis, config)
     if date_value:
         segments.append(Segment(date_value, PRIORITY_DATE, droppable=False, kind="datetime"))
+
+    type_value = _value(analysis.document_type)
+    if type_value:
+        segments.append(Segment(type_value, PRIORITY_TYPE, kind="type"))
 
     if config.media.include_device:
         device = str(meta.get("device") or "")
@@ -333,10 +418,6 @@ def _media_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
         if gps:
             segments.append(Segment(gps, PRIORITY_ENTITY, kind="gps"))
 
-    type_value = _value(analysis.document_type)
-    if type_value:
-        segments.append(Segment(type_value, PRIORITY_TYPE, kind="type"))
-
     duration = str(meta.get("duration_label") or "")
     if duration:
         segments.append(Segment(duration, PRIORITY_ENTITY, kind="duration"))
@@ -345,7 +426,7 @@ def _media_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     if subject_value:
         segments.append(Segment(subject_value, PRIORITY_SUBJECT, kind="subject"))
 
-    original = analysis.source_path.stem
+    original = clean_original_stem(analysis.source_path.stem)
     if original:
         segments.append(Segment(original, PRIORITY_ORIGINAL, kind="original"))
     return segments
@@ -354,7 +435,7 @@ def _media_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
 def _email_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     """Сегменты для писем (раздел 30 ТЗ)."""
     segments: list[Segment] = []
-    date_value = _value(analysis.document_date)
+    date_value = _date_value(analysis, config)
     if date_value:
         segments.append(Segment(date_value, PRIORITY_DATE, droppable=False, kind="date"))
     segments.append(Segment("Email", PRIORITY_TYPE, droppable=False, kind="type"))
@@ -370,7 +451,7 @@ def _email_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
 def _archive_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     """Сегменты для архивов (раздел 32 ТЗ)."""
     segments: list[Segment] = []
-    date_value = _value(analysis.document_date)
+    date_value = _date_value(analysis, config)
     if date_value:
         segments.append(Segment(date_value, PRIORITY_DATE, droppable=False, kind="date"))
     segments.append(Segment("Архив", PRIORITY_TYPE, droppable=False, kind="type"))
@@ -391,7 +472,7 @@ def _geodata_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     segments: list[Segment] = []
     metadata = analysis.metadata or {}
 
-    date_value = _value(analysis.document_date)
+    date_value = _date_value(analysis, config)
     if date_value:
         segments.append(Segment(date_value, PRIORITY_DATE, droppable=False, kind="date"))
 
@@ -441,6 +522,38 @@ def build_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     return segments
 
 
+def _order_segments(segments: list[Segment], config: Config) -> list[Segment]:
+    """Расставить сегменты в выбранном порядке.
+
+    Дата — это уточнение, а не название документа, поэтому по умолчанию она
+    уходит в конец: первым словом имени становится то, по чему файлы удобно
+    искать и сортировать.
+    """
+    if config.naming.order == "date-first":
+        return segments
+    dates = [s for s in segments if s.kind in ("date", "datetime")]
+    rest = [s for s in segments if s.kind not in ("date", "datetime")]
+    return rest + dates if rest else segments
+
+
+def _limit_segments(segments: list[Segment], config: Config) -> list[Segment]:
+    """Оставить в имени только самое существенное.
+
+    Длинное имя из семи частей нечитаемо. Ограничение считается по смысловым
+    сегментам: дата и номер части сюда не входят, они короткие и всегда
+    полезны.
+    """
+    limit = max(2, config.naming.max_segments)
+    core = [s for s in segments if s.kind not in ("date", "datetime", "series")]
+    if len(core) <= limit:
+        return segments
+    keep = sorted(
+        sorted(core, key=lambda s: -s.priority)[:limit],
+        key=core.index,
+    )
+    return [s for s in segments if s in keep or s.kind in ("date", "datetime", "series")]
+
+
 def _dedupe_segments(segments: list[Segment]) -> list[Segment]:
     """Убрать сегменты, дублирующие уже включённый по смыслу текст.
 
@@ -471,6 +584,7 @@ def build_filename(analysis: FileAnalysis, config: Config) -> tuple[str, list[st
     segments = _dedupe_segments(
         [s for s in build_segments(analysis, config) if sanitize_component(s.text)]
     )
+    segments = _limit_segments(_order_segments(segments, config), config)
     if not segments:
         return "", []
 

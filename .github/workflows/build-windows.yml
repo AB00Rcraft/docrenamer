@@ -100,13 +100,48 @@ jobs:
             throw "Предпросмотр изменил файлы, чего быть не должно"
           }
 
+      - name: Проверить, что графическое окно собирается
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $code = @'
+          import tkinter, docrenamer.gui as gui
+          from docrenamer.config import Config
+          from docrenamer.paths import default_paths
+          window = gui.DocRenamerGUI(Config(), default_paths(), None)
+          window.root.update_idletasks()
+          assert window.tree.winfo_exists() and window.log.winfo_exists()
+          window.root.destroy()
+          print("Окно собирается без ошибок")
+          '@
+          $code | Out-File -Encoding utf8 gui_check.py
+          python gui_check.py
+
+      - name: Собрать установщик
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            Write-Host "Inno Setup не найден на агенте — установщик не собирается"
+            exit 0
+          }
+          & $iscc installer\DocRenamer.iss
+          if (-not (Test-Path "dist/installer/DocRenamer-Setup.exe")) {
+            throw "Установщик не собран"
+          }
+          Get-Item dist/installer/DocRenamer-Setup.exe | Select-Object Name, Length
+
       - name: Приложить файлы к релизу
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
           Compress-Archive -Path dist/DocRenamer/* -DestinationPath DocRenamer-portable.zip -Force
           Copy-Item dist/onefile/DocRenamer.exe DocRenamer.exe -Force
-          Get-FileHash DocRenamer.exe,DocRenamer-portable.zip -Algorithm SHA256 |
+          if (Test-Path dist/installer/DocRenamer-Setup.exe) {
+            Copy-Item dist/installer/DocRenamer-Setup.exe DocRenamer-Setup.exe -Force
+          }
+          Get-ChildItem DocRenamer-Setup.exe,DocRenamer.exe,DocRenamer-portable.zip -ErrorAction SilentlyContinue |
+            Get-FileHash -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
             Set-Content SHA256SUMS.txt -Encoding ASCII
 
@@ -115,6 +150,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            DocRenamer-Setup.exe
             DocRenamer.exe
             DocRenamer-portable.zip
             SHA256SUMS.txt

@@ -107,7 +107,7 @@ def test_good_name_is_only_prefixed_with_date(
     app = Application(config, paths=app_paths)
     item = app.preview(workdir).items[0]
 
-    assert item.proposed_filename == "2026-07-27__Постановление по делу Иванова.txt"
+    assert item.proposed_filename == "Постановление по делу Иванова__27.07.2026.txt"
     assert item.selected
 
 
@@ -121,7 +121,7 @@ def test_preserved_name_keeps_spaces_and_typography(
     item = app.preview(workdir).items[0]
 
     assert "Договор займа №17 «Альфа»" in item.proposed_filename
-    assert item.proposed_filename.startswith("2026-07-27__")
+    assert item.proposed_filename.endswith("__27.07.2026.txt")
 
 
 def test_technical_name_is_fully_rebuilt(
@@ -133,7 +133,7 @@ def test_technical_name_is_fully_rebuilt(
     app = Application(config, paths=app_paths)
     item = app.preview(workdir).items[0]
 
-    assert item.proposed_filename.startswith("2026-07-27__Постановление-СПИ__")
+    assert item.proposed_filename.startswith("Постановление-СПИ__")
     assert "652102-26-77028-ИП" in item.proposed_filename
 
 
@@ -199,9 +199,9 @@ def test_volumes_keep_their_numbers(
     plan = app.preview(workdir)
     names = {item.source_path.name: item.proposed_filename for item in plan.items}
 
-    assert names["scan_1.txt"].endswith("__1-из-3.txt")
-    assert names["scan_2.txt"].endswith("__2-из-3.txt")
-    assert names["scan_3.txt"].endswith("__3-из-3.txt")
+    assert "__1-из-3__" in names["scan_1.txt"]
+    assert "__2-из-3__" in names["scan_2.txt"]
+    assert "__3-из-3__" in names["scan_3.txt"]
     # Числовой суффикс разрешения коллизий не появляется: имена и так разные.
     assert not any("__02" in name for name in names.values())
 
@@ -216,8 +216,8 @@ def test_explicit_volume_label_is_kept(
     app = Application(config, paths=app_paths)
     plan = app.preview(workdir)
 
-    assert any(item.proposed_filename.endswith("__том-1.txt") for item in plan.items)
-    assert any(item.proposed_filename.endswith("__том-2.txt") for item in plan.items)
+    assert any("__том-1__" in item.proposed_filename for item in plan.items)
+    assert any("__том-2__" in item.proposed_filename for item in plan.items)
 
 
 def test_second_volume_inherits_missing_date_with_visible_source(
@@ -250,8 +250,8 @@ def test_volumes_survive_apply_and_undo(
     renamed = sorted(p.name for p in workdir.iterdir())
 
     assert report.renamed == 2
-    assert renamed[0].endswith("__1-из-2.txt")
-    assert renamed[1].endswith("__2-из-2.txt")
+    assert "__1-из-2__" in renamed[0]
+    assert "__2-из-2__" in renamed[1]
 
     assert report.manifest_path is not None
     app.undo(report.manifest_path)

@@ -29,12 +29,15 @@
 
   "naming": {
     "max_filename_length": 160,
-    "max_persons_in_filename": 3,
-    "max_organizations_in_filename": 2,
+    "max_persons_in_filename": 2,
+    "max_organizations_in_filename": 1,
     "confidence_threshold": 0.88,
     "separator": "__",
     "allow_filesystem_date_fallback": true,
-    "preserve_good_names": true
+    "preserve_good_names": true,
+    "date_format": "DD.MM.YYYY",
+    "order": "type-first",
+    "max_segments": 3
   },
 
   "media": {

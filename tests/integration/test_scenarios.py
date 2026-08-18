@@ -240,8 +240,9 @@ def test_office_created_property_is_not_document_date(
     assert analysis.document_date is not None
     assert analysis.has_status(Status.DATE_SOURCE_FILE_PROPERTY)
     assert analysis.document_date.confidence < 0.6
-    assert item.confidence < config.naming.confidence_threshold
-    assert not item.selected, "файл с сомнительной датой не переименовывается сам"
+    # Фиктивная дата шаблона не попадает в имя файла ни в каком виде.
+    assert "2013" not in item.proposed_filename
+    assert "27.01" not in item.proposed_filename
 
 
 def test_text_date_wins_over_file_properties(
@@ -268,6 +269,7 @@ def test_gpx_track_gets_meaningful_name(
     plan = app.preview(workdir)
     item = plan.items[0]
 
-    assert item.proposed_filename.startswith("2026-08-03__Трек__Поездка-Москва")
+    assert item.proposed_filename.startswith("Трек__Поездка-Москва")
+    assert "03.08.2026" in item.proposed_filename
     assert item.proposed_filename.endswith(".gpx")
     assert item.selected

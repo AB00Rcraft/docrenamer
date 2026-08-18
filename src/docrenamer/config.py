@@ -126,12 +126,15 @@ class OCRConfig:
 @dataclass(slots=True)
 class NamingConfig:
     max_filename_length: int = 160
-    max_persons_in_filename: int = 3
-    max_organizations_in_filename: int = 2
+    max_persons_in_filename: int = 2
+    max_organizations_in_filename: int = 1
     confidence_threshold: float = 0.88
     separator: str = "__"
     allow_filesystem_date_fallback: bool = True
     preserve_good_names: bool = True
+    date_format: str = "DD.MM.YYYY"
+    order: str = "type-first"
+    max_segments: int = 3
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> NamingConfig:
@@ -161,6 +164,26 @@ class NamingConfig:
             cfg.allow_filesystem_date_fallback = _as_bool(
                 data["allow_filesystem_date_fallback"], "naming.allow_filesystem_date_fallback"
             )
+        if "date_format" in data:
+            from docrenamer.naming.dates import DATE_FORMATS
+
+            value = str(data["date_format"]).strip().upper()
+            if value not in DATE_FORMATS:
+                allowed = ", ".join(sorted(DATE_FORMATS))
+                raise ConfigError(
+                    f"Параметр «naming.date_format» допускает только: {allowed}."
+                )
+            cfg.date_format = value
+        if "order" in data:
+            from docrenamer.naming.builder import NAME_ORDERS
+
+            value = str(data["order"]).strip().lower()
+            if value not in NAME_ORDERS:
+                allowed = ", ".join(sorted(NAME_ORDERS))
+                raise ConfigError(f"Параметр «naming.order» допускает только: {allowed}.")
+            cfg.order = value
+        if "max_segments" in data:
+            cfg.max_segments = _as_int(data["max_segments"], "naming.max_segments", 2, 8)
         if "preserve_good_names" in data:
             cfg.preserve_good_names = _as_bool(
                 data["preserve_good_names"], "naming.preserve_good_names"

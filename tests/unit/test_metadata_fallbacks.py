@@ -111,7 +111,7 @@ def test_photo_named_from_exif_without_exiftool(
     item = app.preview(workdir).items[0]
 
     # Формат совпадает с примером раздела 27 ТЗ.
-    assert item.proposed_filename == "2026-08-03_18-42-17__iPhone-16-Pro__IMG_7834.jpg"
+    assert item.proposed_filename == "Фото__iPhone-16-Pro__03.08.2026_18-42-17.jpg"
     assert item.selected
     assert item.confidence >= config.naming.confidence_threshold
 
@@ -126,7 +126,8 @@ def test_video_named_from_container_without_ffprobe(
     app = Application(config, paths=app_paths)
     item = app.preview(workdir).items[0]
 
-    assert item.proposed_filename.startswith("2026-08-12_17-48-22__Видео")
+    assert item.proposed_filename.startswith("Видео__")
+    assert item.proposed_filename.endswith("__12.08.2026_17-48-22.mp4")
     assert "01m42s" in item.proposed_filename
     assert item.selected
 

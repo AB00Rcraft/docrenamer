@@ -27,18 +27,49 @@ from docrenamer.presentation import format_plan_row, progress_label, row_tag
 
 #: Тёмная нейтральная палитра с одним акцентным цветом.
 COLORS = {
-    "bg": "#1e2126",
-    "panel": "#262a31",
-    "field": "#1a1d22",
-    "text": "#d8dee9",
+    "bg": "#161a20",
+    "panel": "#1f242c",
+    "field": "#12161b",
+    "hover": "#2b3240",
+    "text": "#dde3ec",
     "muted": "#8b93a1",
+    "disabled": "#5b636f",
     "accent": "#4fa3ff",
+    "accent_hover": "#6fb5ff",
+    "accent_text": "#0f1319",
     "ok": "#6fcf7f",
     "warn": "#e2b344",
     "error": "#e06c75",
 }
 
-MONOSPACE = ("Consolas", 10) if tk.TkVersion else ("Courier", 10)
+#: Единая шкала отступов. Все поля, кнопки и панели используют только её,
+#: поэтому расстояния в окне кратны одной величине.
+PAD_XS = 2
+PAD_S = 6
+PAD_M = 10
+PAD_L = 16
+
+#: Единая типографика: один шрифт интерфейса и один моноширинный.
+FONT_FAMILY = "Segoe UI"
+FONT_MONO_FAMILY = "Consolas"
+FONT_TITLE = (FONT_FAMILY, 14, "bold")
+FONT_UI = (FONT_FAMILY, 10)
+FONT_UI_BOLD = (FONT_FAMILY, 10, "bold")
+FONT_SMALL = (FONT_FAMILY, 9)
+FONT_SECTION = (FONT_FAMILY, 9, "bold")
+FONT_MONO = (FONT_MONO_FAMILY, 10)
+
+#: Размеры элементов. Все кнопки одной ширины — ряд выглядит выверенным.
+BUTTON_WIDTH = 15
+ROW_HEIGHT = 26
+DETAILS_HEIGHT = 4
+PROGRESS_HEIGHT = 6
+LEFT_MIN_WIDTH = 620
+RIGHT_MIN_WIDTH = 360
+WINDOW_WIDTH = 1180
+WINDOW_HEIGHT = 720
+WINDOW_MIN_WIDTH = 940
+WINDOW_MIN_HEIGHT = 600
 
 LOCAL_ONLY_TOOLTIP = (
     "Все документы обрабатываются локально.\nСетевые AI API не используются."
@@ -103,180 +134,368 @@ class DocRenamerGUI:
 
         self.root = tk.Tk()
         self.root.title(f"DocRenamer Offline {__version__}")
-        self.root.geometry("1000x680")
-        self.root.minsize(820, 560)
+        self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
+        self.root.minsize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         self.root.configure(bg=COLORS["bg"])
         self._build_style()
         self._build_widgets()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(80, self._drain_events)
         self.root.after(200, self._check_recovery)
+        # Быстрая проверка готовности при запуске: без обращения к модели,
+        # чтобы окно открывалось сразу.
+        self.root.after(300, lambda: self._selftest(probe_model=False, quiet=True))
 
     # --- построение интерфейса --------------------------------------------
 
     def _build_style(self) -> None:
+        """Единая типографика и палитра.
+
+        Все размеры берутся из одной шкалы отступов, чтобы поля, кнопки и
+        панели выглядели выверенно, а не подогнанно по месту.
+        """
         style = ttk.Style(self.root)
         try:
             style.theme_use("clam")
         except tk.TclError:  # pragma: no cover — тема зависит от системы
             pass
+
+        style.configure(".", background=COLORS["bg"], foreground=COLORS["text"])
         style.configure("TFrame", background=COLORS["bg"])
-        style.configure("Panel.TFrame", background=COLORS["panel"])
+        style.configure("Card.TFrame", background=COLORS["panel"])
+        style.configure("TLabel", background=COLORS["bg"], foreground=COLORS["text"], font=FONT_UI)
         style.configure(
-            "TLabel", background=COLORS["bg"], foreground=COLORS["text"], font=("Segoe UI", 10)
+            "Title.TLabel", background=COLORS["bg"], foreground=COLORS["text"], font=FONT_TITLE
         )
         style.configure(
-            "Muted.TLabel",
-            background=COLORS["bg"],
-            foreground=COLORS["muted"],
-            font=("Segoe UI", 9),
+            "Muted.TLabel", background=COLORS["bg"], foreground=COLORS["muted"], font=FONT_SMALL
         )
         style.configure(
-            "Local.TLabel",
-            background=COLORS["bg"],
-            foreground=COLORS["ok"],
-            font=("Segoe UI", 10, "bold"),
+            "Section.TLabel", background=COLORS["bg"], foreground=COLORS["muted"], font=FONT_SECTION
         )
+        for name, color in (
+            ("Local.TLabel", COLORS["ok"]),
+            ("Warn.TLabel", COLORS["warn"]),
+            ("Error.TLabel", COLORS["error"]),
+        ):
+            style.configure(
+                name, background=COLORS["bg"], foreground=color, font=FONT_UI_BOLD
+            )
+
         style.configure(
-            "TButton", background=COLORS["panel"], foreground=COLORS["text"], padding=6
+            "TButton",
+            background=COLORS["panel"],
+            foreground=COLORS["text"],
+            font=FONT_UI,
+            padding=(PAD_M, PAD_S),
+            borderwidth=0,
+            focusthickness=0,
         )
         style.map(
             "TButton",
-            background=[("active", COLORS["accent"]), ("disabled", COLORS["panel"])],
-            foreground=[("disabled", COLORS["muted"])],
+            background=[("active", COLORS["hover"]), ("disabled", COLORS["panel"])],
+            foreground=[("disabled", COLORS["disabled"])],
         )
         style.configure(
             "Accent.TButton",
             background=COLORS["accent"],
-            foreground="#10141a",
-            font=("Segoe UI", 10, "bold"),
+            foreground=COLORS["accent_text"],
+            font=FONT_UI_BOLD,
+            padding=(PAD_M, PAD_S),
+            borderwidth=0,
         )
-        style.configure(
-            "TRadiobutton", background=COLORS["bg"], foreground=COLORS["text"]
+        style.map(
+            "Accent.TButton",
+            background=[("active", COLORS["accent_hover"]), ("disabled", COLORS["panel"])],
+            foreground=[("disabled", COLORS["disabled"])],
         )
-        style.configure("TCheckbutton", background=COLORS["bg"], foreground=COLORS["text"])
+
         style.configure(
-            "TEntry", fieldbackground=COLORS["field"], foreground=COLORS["text"]
+            "TRadiobutton", background=COLORS["bg"], foreground=COLORS["text"], font=FONT_UI
+        )
+        style.map("TRadiobutton", background=[("active", COLORS["bg"])])
+        style.configure(
+            "TCheckbutton", background=COLORS["bg"], foreground=COLORS["text"], font=FONT_UI
+        )
+        style.map("TCheckbutton", background=[("active", COLORS["bg"])])
+        style.configure(
+            "TEntry",
+            fieldbackground=COLORS["field"],
+            foreground=COLORS["text"],
+            insertcolor=COLORS["text"],
+            borderwidth=0,
+            padding=PAD_S,
         )
         style.configure(
             "Treeview",
             background=COLORS["field"],
             fieldbackground=COLORS["field"],
             foreground=COLORS["text"],
-            rowheight=22,
+            font=FONT_UI,
+            rowheight=ROW_HEIGHT,
+            borderwidth=0,
         )
-        style.configure("Treeview.Heading", background=COLORS["panel"], foreground=COLORS["text"])
+        style.map("Treeview", background=[("selected", COLORS["accent"])],
+                  foreground=[("selected", COLORS["accent_text"])])
         style.configure(
-            "TProgressbar", background=COLORS["accent"], troughcolor=COLORS["field"]
+            "Treeview.Heading",
+            background=COLORS["panel"],
+            foreground=COLORS["muted"],
+            font=FONT_SECTION,
+            padding=(PAD_S, PAD_S),
+            borderwidth=0,
         )
+        style.configure(
+            "TProgressbar",
+            background=COLORS["accent"],
+            troughcolor=COLORS["field"],
+            borderwidth=0,
+            thickness=PROGRESS_HEIGHT,
+        )
+        style.configure("TPanedwindow", background=COLORS["bg"])
+        style.configure("Sash", sashthickness=PAD_M, gripcount=0)
 
     def _build_widgets(self) -> None:
-        header = ttk.Frame(self.root, padding=(12, 10, 12, 6))
-        header.pack(fill="x")
-        ttk.Label(header, text="DocRenamer Offline", font=("Segoe UI", 13, "bold")).pack(
-            side="left"
+        """Собрать окно.
+
+        Раскладка: заголовок, панель выбора папки, рабочая область из двух
+        колонок (слева список файлов и подробности, справа журнал), строка
+        прогресса и ряд кнопок. Журнал занимает отдельную колонку и поэтому
+        виден всегда, сколько бы файлов ни было в списке.
+        """
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(2, weight=1)
+
+        self._build_header()
+        self._build_toolbar()
+        self._build_workspace()
+        self._build_status()
+        self._build_actions()
+
+        self._log(f"DocRenamer Offline {__version__}. Все данные обрабатываются локально.")
+
+    def _build_header(self) -> None:
+        header = ttk.Frame(self.root, padding=(PAD_L, PAD_M, PAD_L, PAD_S))
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+
+        ttk.Label(header, text="DocRenamer Offline", style="Title.TLabel").grid(
+            row=0, column=0, sticky="w"
         )
+
+        self.readiness_var = tk.StringVar(value="… проверка готовности")
+        self.readiness_label = ttk.Label(
+            header, textvariable=self.readiness_var, style="Muted.TLabel"
+        )
+        self.readiness_label.grid(row=0, column=1, sticky="e", padx=(PAD_M, PAD_L))
+        Tooltip(self.readiness_label, "Нажмите «Самопроверка», чтобы увидеть подробности.")
+
         badge = ttk.Label(header, text="● LOCAL ONLY", style="Local.TLabel")
-        badge.pack(side="right")
+        badge.grid(row=0, column=2, sticky="e")
         Tooltip(badge, LOCAL_ONLY_TOOLTIP)
 
-        chooser = ttk.Frame(self.root, padding=(12, 0, 12, 6))
-        chooser.pack(fill="x")
-        ttk.Label(chooser, text="Папка:").pack(side="left")
-        self.directory_var = tk.StringVar(value=str(self.directory or ""))
-        entry = ttk.Entry(chooser, textvariable=self.directory_var)
-        entry.pack(side="left", fill="x", expand=True, padx=8)
-        ttk.Button(chooser, text="Выбрать", command=self._choose_directory).pack(side="left")
+    def _build_toolbar(self) -> None:
+        toolbar = ttk.Frame(self.root, padding=(PAD_L, 0, PAD_L, PAD_M))
+        toolbar.grid(row=1, column=0, sticky="ew")
+        toolbar.columnconfigure(1, weight=1)
 
-        modes = ttk.Frame(self.root, padding=(12, 0, 12, 6))
-        modes.pack(fill="x")
+        ttk.Label(toolbar, text="Папка").grid(row=0, column=0, sticky="w", padx=(0, PAD_M))
+        self.directory_var = tk.StringVar(value=str(self.directory or ""))
+        entry = ttk.Entry(toolbar, textvariable=self.directory_var, font=FONT_UI)
+        entry.grid(row=0, column=1, sticky="ew", ipady=PAD_XS)
+        ttk.Button(
+            toolbar, text="Выбрать", width=BUTTON_WIDTH, command=self._choose_directory
+        ).grid(row=0, column=2, sticky="e", padx=(PAD_M, 0))
+
+        modes = ttk.Frame(toolbar)
+        modes.grid(row=1, column=0, columnspan=3, sticky="w", pady=(PAD_M, 0))
         self.mode_var = tk.StringVar(value="preview")
-        for value, label in (
-            ("analyze", "Анализ"),
-            ("preview", "Предпросмотр"),
-            ("apply", "Применить"),
+        for index, (value, label) in enumerate(
+            (("analyze", "Анализ"), ("preview", "Предпросмотр"), ("apply", "Применить"))
         ):
-            ttk.Radiobutton(modes, text=label, value=value, variable=self.mode_var).pack(
-                side="left", padx=(0, 14)
+            ttk.Radiobutton(modes, text=label, value=value, variable=self.mode_var).grid(
+                row=0, column=index, sticky="w", padx=(0, PAD_L)
             )
         self.recursive_var = tk.BooleanVar(value=self.config.recursive)
-        ttk.Checkbutton(modes, text="Рекурсивно", variable=self.recursive_var).pack(side="left")
+        ttk.Checkbutton(modes, text="Включая подпапки", variable=self.recursive_var).grid(
+            row=0, column=3, sticky="w"
+        )
 
-        panes = ttk.PanedWindow(self.root, orient="vertical")
-        panes.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+    def _build_workspace(self) -> None:
+        """Две колонки: список файлов и журнал."""
+        workspace = ttk.PanedWindow(self.root, orient="horizontal")
+        workspace.grid(row=2, column=0, sticky="nsew", padx=PAD_L)
 
-        preview_frame = ttk.Frame(panes)
+        left = ttk.Frame(workspace, width=LEFT_MIN_WIDTH)
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(1, weight=1)
+        workspace.add(left, weight=3)
+
+        ttk.Label(left, text="ЧТО БУДЕТ ПЕРЕИМЕНОВАНО", style="Section.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, PAD_S)
+        )
+
+        table = ttk.Frame(left)
+        table.grid(row=1, column=0, sticky="nsew")
+        table.columnconfigure(0, weight=1)
+        table.rowconfigure(0, weight=1)
+
         self.tree = ttk.Treeview(
-            preview_frame,
+            table,
             columns=("current", "proposed", "confidence", "status"),
             show="headings",
             selectmode="browse",
         )
-        for column, title, width in (
-            ("current", "Текущее имя", 240),
-            ("proposed", "Предлагаемое имя", 420),
-            ("confidence", "Уверенность", 100),
-            ("status", "Состояние", 180),
+        for column, title, width, anchor, stretch in (
+            ("current", "Текущее имя", 220, "w", False),
+            ("proposed", "Предлагаемое имя", 420, "w", True),
+            ("confidence", "Уверенность", 110, "center", False),
+            ("status", "Состояние", 170, "w", False),
         ):
             self.tree.heading(column, text=title)
-            self.tree.column(column, width=width, anchor="w")
+            self.tree.column(column, width=width, anchor=anchor, stretch=stretch, minwidth=90)
         self.tree.tag_configure("ok", foreground=COLORS["ok"])
         self.tree.tag_configure("warn", foreground=COLORS["warn"])
         self.tree.tag_configure("error", foreground=COLORS["error"])
-        scroll = ttk.Scrollbar(preview_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scroll.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        scroll.pack(side="right", fill="y")
+        self.tree.grid(row=0, column=0, sticky="nsew")
+
+        vertical = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal = ttk.Scrollbar(table, orient="horizontal", command=self.tree.xview)
+        horizontal.grid(row=1, column=0, sticky="ew")
+        self.tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+
         self.tree.bind("<space>", self._toggle_selected)
         self.tree.bind("<Double-1>", self._toggle_selected)
-        panes.add(preview_frame, weight=3)
+        self.tree.bind("<<TreeviewSelect>>", self._show_details)
 
-        log_frame = ttk.Frame(panes)
+        # Подробности выбранной строки: длинные имена показываются целиком,
+        # с переносом, а не обрезаются шириной колонки.
+        details = ttk.Frame(left, style="Card.TFrame", padding=PAD_M)
+        details.grid(row=2, column=0, sticky="ew", pady=(PAD_M, 0))
+        details.columnconfigure(0, weight=1)
+        self.details = tk.Text(
+            details,
+            height=DETAILS_HEIGHT,
+            wrap="word",
+            bg=COLORS["panel"],
+            fg=COLORS["text"],
+            font=FONT_MONO,
+            relief="flat",
+            highlightthickness=0,
+            state="disabled",
+        )
+        self.details.grid(row=0, column=0, sticky="ew")
+        self._set_details("Выберите файл в списке, чтобы увидеть подробности.")
+
+        right = ttk.Frame(workspace, width=RIGHT_MIN_WIDTH)
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(1, weight=1)
+        workspace.add(right, weight=2)
+
+        ttk.Label(right, text="ЖУРНАЛ РАБОТЫ", style="Section.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, PAD_S)
+        )
+        log_frame = ttk.Frame(right)
+        log_frame.grid(row=1, column=0, sticky="nsew")
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+
         self.log = tk.Text(
             log_frame,
-            height=10,
             bg=COLORS["field"],
             fg=COLORS["text"],
             insertbackground=COLORS["text"],
-            font=MONOSPACE,
+            font=FONT_MONO,
             relief="flat",
-            wrap="none",
+            highlightthickness=0,
+            wrap="word",
+            padx=PAD_M,
+            pady=PAD_S,
+            state="disabled",
         )
+        self.log.grid(row=0, column=0, sticky="nsew")
         log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log.yview)
-        self.log.configure(yscrollcommand=log_scroll.set, state="disabled")
-        self.log.pack(side="left", fill="both", expand=True)
-        log_scroll.pack(side="right", fill="y")
-        panes.add(log_frame, weight=2)
+        log_scroll.grid(row=0, column=1, sticky="ns")
+        self.log.configure(yscrollcommand=log_scroll.set)
 
-        status = ttk.Frame(self.root, padding=(12, 0, 12, 4))
-        status.pack(fill="x")
+    def _build_status(self) -> None:
+        status = ttk.Frame(self.root, padding=(PAD_L, PAD_M, PAD_L, PAD_S))
+        status.grid(row=3, column=0, sticky="ew")
+        status.columnconfigure(0, weight=1)
+
         self.progress = ttk.Progressbar(status, mode="determinate")
-        self.progress.pack(side="left", fill="x", expand=True)
+        self.progress.grid(row=0, column=0, sticky="ew")
         self.status_var = tk.StringVar(value="Готово")
-        ttk.Label(status, textvariable=self.status_var, style="Muted.TLabel").pack(
-            side="right", padx=(10, 0)
+        ttk.Label(status, textvariable=self.status_var, style="Muted.TLabel").grid(
+            row=0, column=1, sticky="e", padx=(PAD_M, 0)
         )
 
-        buttons = ttk.Frame(self.root, padding=(12, 0, 12, 12))
-        buttons.pack(fill="x")
-        self.scan_button = ttk.Button(buttons, text="Сканировать", command=self._scan)
-        self.scan_button.pack(side="left")
-        self.preview_button = ttk.Button(buttons, text="Предпросмотр", command=self._preview)
-        self.preview_button.pack(side="left", padx=6)
+    def _build_actions(self) -> None:
+        """Ряд кнопок: слева действия над файлами, справа служебные."""
+        actions = ttk.Frame(self.root, padding=(PAD_L, PAD_S, PAD_L, PAD_L))
+        actions.grid(row=4, column=0, sticky="ew")
+        actions.columnconfigure(4, weight=1)
+
+        self.scan_button = ttk.Button(
+            actions, text="Сканировать", width=BUTTON_WIDTH, command=self._scan
+        )
+        self.scan_button.grid(row=0, column=0, sticky="w")
+        self.preview_button = ttk.Button(
+            actions, text="Предпросмотр", width=BUTTON_WIDTH, command=self._preview
+        )
+        self.preview_button.grid(row=0, column=1, sticky="w", padx=(PAD_M, 0))
         self.apply_button = ttk.Button(
-            buttons, text="Переименовать", style="Accent.TButton", command=self._apply
+            actions,
+            text="Переименовать",
+            width=BUTTON_WIDTH,
+            style="Accent.TButton",
+            command=self._apply,
         )
-        self.apply_button.pack(side="left", padx=6)
-        self.undo_button = ttk.Button(buttons, text="Отменить последнее", command=self._undo)
-        self.undo_button.pack(side="left", padx=6)
-        self.stop_button = ttk.Button(buttons, text="Стоп", command=self._stop, state="disabled")
-        self.stop_button.pack(side="left", padx=6)
-        ttk.Button(buttons, text="Открыть лог", command=self._open_logs).pack(side="right")
-        ttk.Button(buttons, text="⚙ Настройки", command=self._open_settings).pack(
-            side="right", padx=6
+        self.apply_button.grid(row=0, column=2, sticky="w", padx=(PAD_M, 0))
+        self.undo_button = ttk.Button(
+            actions, text="Отменить", width=BUTTON_WIDTH, command=self._undo
         )
+        self.undo_button.grid(row=0, column=3, sticky="w", padx=(PAD_M, 0))
+        self.stop_button = ttk.Button(
+            actions, text="Стоп", width=BUTTON_WIDTH, command=self._stop, state="disabled"
+        )
+        self.stop_button.grid(row=0, column=4, sticky="w", padx=(PAD_M, 0))
 
-        self._log(f"DocRenamer Offline {__version__}. Все данные обрабатываются локально.")
+        ttk.Button(
+            actions, text="Самопроверка", width=BUTTON_WIDTH, command=self._selftest
+        ).grid(row=0, column=5, sticky="e", padx=(PAD_M, 0))
+        ttk.Button(
+            actions, text="Журнал", width=BUTTON_WIDTH, command=self._open_logs
+        ).grid(row=0, column=6, sticky="e", padx=(PAD_M, 0))
+        ttk.Button(
+            actions, text="Настройки", width=BUTTON_WIDTH, command=self._open_settings
+        ).grid(row=0, column=7, sticky="e", padx=(PAD_M, 0))
+
+    def _set_details(self, text: str) -> None:
+        """Показать подробности выбранного файла."""
+        self.details.configure(state="normal")
+        self.details.delete("1.0", "end")
+        self.details.insert("1.0", text)
+        self.details.configure(state="disabled")
+
+    def _show_details(self, _event: object = None) -> None:
+        """Полные имена выбранного файла — без обрезки по ширине колонки."""
+        if self.plan is None:
+            return
+        selection = self.tree.selection()
+        if not selection:
+            return
+        item = self.plan.items[int(selection[0])]
+        lines = [f"Сейчас:  {item.source_path.name}"]
+        if item.is_rename:
+            lines.append(f"Станет:  {item.proposed_filename}")
+        lines.append(
+            f"Уверенность: {item.confidence * 100:.0f}%    Состояние: {item.status}"
+        )
+        if item.message:
+            lines.append(item.message)
+        self._set_details("\n".join(lines))
 
     # --- журнал и события --------------------------------------------------
 
@@ -301,6 +520,8 @@ class DocRenamerGUI:
                     self._show_plan(payload)
                 elif kind == "done":
                     self._finish(str(payload))
+                elif kind == "readiness":
+                    self._show_readiness(payload)
                 elif kind == "error":
                     self._finish("Ошибка")
                     messagebox.showerror("DocRenamer", str(payload))
@@ -464,6 +685,40 @@ class DocRenamerGUI:
 
     def _open_settings(self) -> None:
         SettingsDialog(self.root, self.config, self.paths)
+
+    # --- готовность комплекта ---------------------------------------------
+
+    def _selftest(self, *, probe_model: bool = True, quiet: bool = False) -> None:
+        """Проверить, что всё необходимое на месте и разбор работает."""
+        from docrenamer.selftest import run_selftest
+
+        def work() -> None:
+            report = run_selftest(self.config, self.paths, probe_model=probe_model)
+            self.events.put(("readiness", report))
+            if not quiet:
+                for line in report.format_text().splitlines():
+                    self.events.put(("log", line))
+            self.events.put(("done", report.verdict))
+
+        if quiet:
+            threading.Thread(target=work, daemon=True).start()
+            return
+        self._run_async(work)
+
+    def _show_readiness(self, report: Any) -> None:
+        """Обновить значок готовности в заголовке окна."""
+        self.readiness_var.set(report.badge)
+        if report.failed:
+            style = "Error.TLabel"
+        elif report.warnings:
+            style = "Warn.TLabel"
+        else:
+            style = "Local.TLabel"
+        self.readiness_label.configure(style=style)
+        details = "\n".join(
+            f"{check.icon} {check.name}: {check.detail}" for check in report.checks
+        )
+        Tooltip(self.readiness_label, details)
 
     # --- план --------------------------------------------------------------
 

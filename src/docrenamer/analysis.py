@@ -51,6 +51,18 @@ CATEGORY_LABELS: dict[Category, str] = {
     Category.AUDIO: "Аудиозапись",
 }
 
+#: Нейтральное обозначение по виду файла. Используется, когда вид документа
+#: определить не удалось: это честная характеристика файла, а не догадка о его
+#: юридическом смысле.
+FILE_KIND_LABELS: dict[str, str] = {
+    "pptx": "Презентация",
+    "ppt": "Презентация",
+    "xlsx": "Таблица",
+    "xlsm": "Таблица",
+    "xls": "Таблица",
+    "csv": "Таблица",
+}
+
 
 class Analyzer(Protocol):
     """Контракт анализатора для :class:`docrenamer.app.Application`."""
@@ -294,6 +306,20 @@ class Pipeline:
                 confidence=best_type.confidence,
             )
             analysis.metadata["document_type_canonical"] = best_type.value
+        else:
+            # Вид документа не подтверждён. Лучше назвать файл нейтрально по
+            # его формату, чем присвоить ему чужой юридический ярлык
+            # (раздел 92 ТЗ).
+            label = FILE_KIND_LABELS.get(analysis.detected_type, "")
+            if label:
+                analysis.document_type = Field(
+                    value=label,
+                    source=Source.METADATA,
+                    evidence=f"формат файла: {analysis.detected_type}",
+                    # Вид файла определён по сигнатуре — это факт, а не догадка
+                    # о юридическом смысле документа.
+                    confidence=0.95,
+                )
 
         date_candidates = extract_dates(text)
         analysis.candidates["dates"] = date_candidates[:10]
@@ -406,7 +432,10 @@ class Pipeline:
         # наличии модели камеры подпись категории избыточна (примеры разделов
         # 27–29 ТЗ).
         device_known = bool(metadata.get("device")) and self.config.media.include_device
-        if label and device_known:
+        if label and device_known and self.config.naming.order == "date-first":
+            # При сортировке по дате подпись категории избыточна: модель камеры
+            # и так говорит, что это снимок. При сортировке по названию она,
+            # наоборот, собирает все фотографии рядом.
             label = ""
         if label and analysis.document_type is None:
             analysis.document_type = Field(
@@ -587,6 +616,11 @@ class Pipeline:
         """Краткий предмет документа на основе проверяемых признаков."""
         metadata = analysis.metadata
         title = str(metadata.get("title") or "").strip()
+        if not title:
+            # У презентации осмысленное название чаще всего на первом слайде.
+            slide_titles = metadata.get("slide_titles") or []
+            if isinstance(slide_titles, list) and slide_titles:
+                title = str(slide_titles[0]).strip()
         if (
             title
             and 3 <= len(title) <= 80
@@ -596,8 +630,8 @@ class Pipeline:
             return Field(
                 value=title,
                 source=Source.METADATA,
-                evidence=f"свойство документа title={title}",
-                confidence=0.85,
+                evidence=f"название документа: {title}",
+                confidence=0.9,
             )
         lowered = text.lower()
         for phrase in (
@@ -710,7 +744,10 @@ def compute_confidence(analysis: FileAnalysis) -> float:
 
     if analysis.document_type is not None and analysis.document_type.accepted:
         add(analysis.document_type.confidence, 3.0, source=analysis.document_type.source)
-    if analysis.document_date is not None and analysis.document_date.accepted:
+    # Дата из свойств файла в имя не попадает (см. naming/builder), поэтому и
+    # уверенность в имени она снижать не должна.
+    date_in_name = not analysis.has_status(Status.DATE_SOURCE_FILE_PROPERTY)
+    if analysis.document_date is not None and analysis.document_date.accepted and date_in_name:
         add(analysis.document_date.confidence, 3.0, source=analysis.document_date.source)
     if analysis.document_number is not None and analysis.document_number.accepted:
         add(analysis.document_number.confidence, 2.0, source=analysis.document_number.source)
@@ -722,7 +759,10 @@ def compute_confidence(analysis: FileAnalysis) -> float:
     if analysis.main_organizations:
         add(max(o.confidence for o in analysis.main_organizations), 1.0)
     if analysis.subject is not None and analysis.subject.accepted:
-        add(analysis.subject.confidence, 1.0, source=analysis.subject.source)
+        # Название, которое автор написал сам, весит больше, чем предмет,
+        # выведенный из текста.
+        weight = 2.0 if analysis.subject.source is Source.METADATA else 1.0
+        add(analysis.subject.confidence, weight, source=analysis.subject.source)
 
     if not weights:
         return 0.0
@@ -739,8 +779,6 @@ def compute_confidence(analysis: FileAnalysis) -> float:
         score *= 0.9
     if analysis.has_status(Status.DATE_SOURCE_FILESYSTEM):
         score *= 0.85
-    if analysis.has_status(Status.DATE_SOURCE_FILE_PROPERTY):
-        score *= 0.9
     if analysis.has_status(Status.PARTIAL_SUPPORT_LEGACY_OFFICE):
         score *= 0.9
     return round(min(1.0, max(0.0, score)), 4)
