@@ -144,3 +144,53 @@ def test_gps_included_only_when_configured(
     item = app.preview(workdir).items[0]
 
     assert "GPS_55.7558_37.6173" in item.proposed_filename
+
+
+# --- время в имени ----------------------------------------------------------
+
+
+def test_time_is_kept_only_for_real_capture_moment(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """Время в имени — только если это настоящий момент съёмки.
+
+    У снимка без EXIF время файла означает момент копирования, а не съёмки:
+    такая точность вводит в заблуждение.
+    """
+    config.allow_system_binaries = False
+    builders.make_jpeg_with_exif(workdir / "IMG_7834.jpg")
+    builders.make_jpeg(workdir / "IMG_1822.jpg")
+
+    app = Application(config, paths=app_paths)
+    names = {i.source_path.name: i.proposed_filename for i in app.preview(workdir).items}
+
+    assert names["IMG_7834.jpg"].endswith("_03.08.2026_18.42.17.jpg")
+    assert names["IMG_1822.jpg"].count(".") == 3, names["IMG_1822.jpg"]
+    assert "_18.42.17" not in names["IMG_1822.jpg"]
+
+
+def test_documents_never_carry_time(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """Документу точное время не нужно — только дата."""
+    (workdir / "scan0007.txt").write_bytes(
+        "ПОСТАНОВЛЕНИЕ\nот 27 июля 2026 года\nДолжник: Иванов И.И.\n".encode()
+    )
+
+    app = Application(config, paths=app_paths)
+    name = app.preview(workdir).items[0].proposed_filename
+
+    assert name.endswith("_27.07.2026.txt")
+
+
+def test_capture_time_can_be_disabled(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    config.naming.include_capture_time = False
+    config.allow_system_binaries = False
+    builders.make_jpeg_with_exif(workdir / "IMG_7834.jpg")
+
+    app = Application(config, paths=app_paths)
+    name = app.preview(workdir).items[0].proposed_filename
+
+    assert name.endswith("_03.08.2026.jpg")

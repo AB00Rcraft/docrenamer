@@ -408,13 +408,16 @@ class Pipeline:
         stamp = str(metadata.get("datetime") or "")
         if stamp:
             analysis.document_date = Field(
-                value=_media_stamp(stamp),
+                value=_media_stamp(stamp, with_time=self.config.naming.include_capture_time),
                 source=Source.METADATA,
                 evidence=f"{metadata.get('datetime_source', 'metadata')}={stamp}",
                 confidence=0.97,
             )
         elif self.config.naming.allow_filesystem_date_fallback:
-            fallback = self._filesystem_date(analysis, with_time=True)
+            # Только дата, без времени: время файла — это когда его скопировали,
+            # а не когда сделали снимок. Точность, которой у нас нет, вводит
+            # в заблуждение (раздел 65 ТЗ).
+            fallback = self._filesystem_date(analysis)
             if fallback is not None:
                 analysis.document_date = Field(
                     value=fallback.value,
@@ -763,15 +766,17 @@ class Pipeline:
                 analysis.add_status(Status.NAME_UNCHANGED)
 
 
-def _media_stamp(iso_value: str) -> str:
+def _media_stamp(iso_value: str, *, with_time: bool = True) -> str:
     """Дата и время съёмки для имени файла.
 
-    Время записывается через точку, как и дата: единственным разделителем
-    частей имени остаётся подчёркивание.
+    Время указывается только для снимков, видео и записей: за один день их
+    бывает много, и время их различает. Для остальных файлов такая точность
+    не нужна. Записывается через точку, как и дата, чтобы единственным
+    разделителем частей имени оставалось подчёркивание.
     """
     value = iso_value.strip().replace("T", " ")
     date_part, _, time_part = value.partition(" ")
-    if not time_part:
+    if not time_part or not with_time:
         return date_part
     return f"{date_part}_{time_part[:8].replace(':', '.')}"
 

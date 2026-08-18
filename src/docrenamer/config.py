@@ -132,6 +132,9 @@ class NamingConfig:
     separator: str = "_"
     allow_filesystem_date_fallback: bool = True
     preserve_good_names: bool = True
+    #: Добавлять время в имя фотографий, видео и аудиозаписей. Время берётся
+    #: только из метаданных съёмки: у документов и у снимков без EXIF его нет.
+    include_capture_time: bool = True
     date_format: str = "DD.MM.YYYY"
     order: str = "type-first"
     max_segments: int = 3
@@ -184,6 +187,10 @@ class NamingConfig:
             cfg.order = value
         if "max_segments" in data:
             cfg.max_segments = _as_int(data["max_segments"], "naming.max_segments", 2, 8)
+        if "include_capture_time" in data:
+            cfg.include_capture_time = _as_bool(
+                data["include_capture_time"], "naming.include_capture_time"
+            )
         if "preserve_good_names" in data:
             cfg.preserve_good_names = _as_bool(
                 data["preserve_good_names"], "naming.preserve_good_names"
