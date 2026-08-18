@@ -47,6 +47,17 @@ jobs:
           pip install pyinstaller reportlab pytest pytest-timeout ruff
           pip install -e .
 
+      - name: Версия в коде совпадает с тегом
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $code = (python -c "import docrenamer; print(docrenamer.__version__)").Trim()
+          $tag = "${{ github.ref_name }}".TrimStart("v")
+          Write-Host "версия в коде: $code, тег: $tag"
+          if ($code -ne $tag) {
+            throw "Версия в коде ($code) не совпадает с тегом ($tag). Обновление будет работать неверно."
+          }
+
       - name: Тесты
         env:
           # Короткий временный каталог: длинные русские имена в стандартном
