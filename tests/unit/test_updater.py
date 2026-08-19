@@ -353,3 +353,16 @@ def test_installer_handles_upgrade_over_previous_version() -> None:
     assert "PrepareToInstall" in script, "прежняя версия должна сниматься заранее"
     assert "UsePreviousAppDir=yes" in script
     assert "SetupMutex" in script, "два установщика одновременно недопустимы"
+
+
+def test_installer_cleans_up_old_shortcuts() -> None:
+    """Ярлыки прежних названий удаляются: иначе их накапливается несколько."""
+    script = (Path(__file__).resolve().parents[2] / "installer" / "DocRenamer.iss").read_text(
+        encoding="utf-8"
+    )
+
+    assert "[InstallDelete]" in script
+    for old_name in ("DocRenamer Offline", "Переименователь документов"):
+        assert f"{old_name}.lnk" in script, f"не удаляется ярлык «{old_name}»"
+    assert "ie4uinit.exe" in script, "кэш значков Windows должен обновляться"
+    assert "IconFilename" in script, "ярлык должен явно ссылаться на значок программы"

@@ -7,7 +7,7 @@
 ; Сборка: ISCC.exe installer\DocRenamer.iss
 
 #define AppName "Ренеймер документов"
-#define AppVersion "1.2.0"
+#define AppVersion "1.2.1"
 #define AppPublisher "DocRenamer"
 #define AppExeName "DocRenamer.exe"
 
@@ -72,11 +72,23 @@ Name: "{app}\runtime_temp"
 Name: "{app}\models"
 Name: "{app}\runtime"
 
+[InstallDelete]
+; Ярлыки прежних версий: программа меняла название, и на рабочем столе
+; накапливались дубликаты. Старые удаляются до создания новых.
+Type: files; Name: "{autodesktop}\DocRenamer Offline.lnk"
+Type: files; Name: "{autodesktop}\Переименователь документов.lnk"
+Type: files; Name: "{userdesktop}\DocRenamer Offline.lnk"
+Type: files; Name: "{userdesktop}\Переименователь документов.lnk"
+Type: filesandordirs; Name: "{autoprograms}\DocRenamer Offline"
+Type: filesandordirs; Name: "{autoprograms}\Переименователь документов"
+Type: filesandordirs; Name: "{userprograms}\DocRenamer Offline"
+Type: filesandordirs; Name: "{userprograms}\Переименователь документов"
+
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
+Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\{#AppExeName}"; IconIndex: 0
 Name: "{group}\Журналы работы"; Filename: "{app}\logs"
 Name: "{group}\Удалить {#AppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\{#AppExeName}"; IconIndex: 0; Tasks: desktopicon
 
 [Registry]
 ; Пункт контекстного меню для папки и для пустого места внутри папки.
@@ -125,6 +137,9 @@ begin
 end;
 
 [Run]
+; Windows кэширует значки: после смены логотипа ярлык продолжает показывать
+; прежнюю картинку, пока кэш не обновлён.
+Filename: "{sys}\ie4uinit.exe"; Parameters: "-show"; Flags: runhidden waituntilterminated skipifdoesntexist
 Filename: "{app}\{#AppExeName}"; Description: "Запустить {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
