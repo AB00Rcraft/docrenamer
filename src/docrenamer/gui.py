@@ -56,6 +56,7 @@ from docrenamer.preview import (
     text_preview,
     thumbnail_png,
 )
+from docrenamer.reveal import reveal
 from docrenamer.security.subprocess_safe import hidden_process_options
 from docrenamer.types import PlanItem
 
@@ -94,7 +95,10 @@ FONT_SECTION = (FONT_FAMILY, 9, "bold")
 FONT_MONO = (FONT_MONO_FAMILY, 10)
 
 #: Размеры элементов. Все кнопки одной ширины — ряд выглядит выверенным.
-BUTTON_WIDTH = 13
+#: Ширина кнопки в знаках. Считается по самой длинной надписи ряда
+#: («Переименовать») с запасом на полужирный шрифт: обрезанная надпись на
+#: главной кнопке — это не мелочь оформления, а непонятно что нажимать.
+BUTTON_WIDTH = 16
 ROW_HEIGHT = 26
 DETAILS_HEIGHT = 7
 PROGRESS_HEIGHT = 6
@@ -177,6 +181,9 @@ TOOLTIPS: dict[str, str] = {
             "Предпросмотр — показать предлагаемые имена.\n"
             "Применить — переименовать по плану.",
     "recursive": "Обрабатывать файлы и во вложенных папках.",
+    "reset": "Начать сначала: очистить список, предпросмотр и журнал\n"
+             "и вернуться в домашнюю папку.",
+    "reveal": "Открыть папку с этим файлом в проводнике.",
     "only_new": "Не показывать файлы, которые программа уже переименовывала.\n"
                 "Узнаются по контрольной сумме и имени из прошлых операций,\n"
                 "поэтому повторный запуск не гоняет папку по кругу.",
@@ -962,6 +969,9 @@ class DocRenamerGUI:
         self.paths = paths
         self.directory: Path | None = initial_directory
         self.plan: RenamePlan | None = None
+        #: Найденные файлы после сканирования: по строке списка нужен путь,
+        #: даже когда плана ещё нет.
+        self.scanned: list[Any] = []
         #: Узлы дерева для папок: путь → строка Treeview.
         self.nodes: dict[Path, str] = {}
         self.learning = LearningLog(
@@ -1224,9 +1234,14 @@ class DocRenamerGUI:
         )
         choose.grid(row=0, column=2, sticky="e", padx=(PAD_M, 0))
         Tooltip(choose, TOOLTIPS["choose"])
+        reset = ttk.Button(
+            toolbar, text="Сбросить", width=BUTTON_WIDTH - 4, command=self._reset_session
+        )
+        reset.grid(row=0, column=3, sticky="e", padx=(PAD_S, 0))
+        Tooltip(reset, TOOLTIPS["reset"])
 
         modes = ttk.Frame(toolbar)
-        modes.grid(row=1, column=0, columnspan=3, sticky="w", pady=(PAD_M, 0))
+        modes.grid(row=1, column=0, columnspan=4, sticky="w", pady=(PAD_M, 0))
         self.mode_var = tk.StringVar(value="preview")
         for index, (value, label) in enumerate(
             (("analyze", "Анализ"), ("preview", "Предпросмотр"), ("apply", "Применить"))
@@ -1349,9 +1364,22 @@ class DocRenamerGUI:
         right.rowconfigure(5, weight=2, minsize=LOG_MIN_HEIGHT)
         workspace.add(right, weight=2)
 
-        ttk.Label(right, text="ПРЕДПРОСМОТР ФАЙЛА", style="Section.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, PAD_S)
+        preview_header = ttk.Frame(right)
+        preview_header.grid(row=0, column=0, sticky="ew", pady=(0, PAD_S))
+        preview_header.columnconfigure(0, weight=1)
+        ttk.Label(preview_header, text="ПРЕДПРОСМОТР ФАЙЛА", style="Section.TLabel").grid(
+            row=0, column=0, sticky="w"
         )
+        # Отсюда чаще всего и хотят перейти к самому файлу: посмотреть
+        # соседние, скопировать, отправить.
+        self.reveal_button = ttk.Button(
+            preview_header,
+            text="Перейти к файлу",
+            width=BUTTON_WIDTH,
+            command=self._reveal_selected,
+        )
+        self.reveal_button.grid(row=0, column=1, sticky="e")
+        Tooltip(self.reveal_button, TOOLTIPS["reveal"])
         preview = ttk.Frame(right, style="Card.TFrame", padding=PAD_S)
         preview.grid(row=1, column=0, sticky="nsew")
         preview.columnconfigure(0, weight=1)
@@ -1447,7 +1475,7 @@ class DocRenamerGUI:
         """Ряд кнопок: слева действия над файлами, справа служебные."""
         actions = ttk.Frame(self.root, padding=(PAD_L, PAD_S, PAD_L, PAD_L))
         actions.grid(row=5, column=0, sticky="ew")
-        actions.columnconfigure(6, weight=1)
+        actions.columnconfigure(7, weight=1)
 
         self.scan_button = ttk.Button(
             actions, text="Сканировать", width=BUTTON_WIDTH, command=self._scan
@@ -1487,6 +1515,17 @@ class DocRenamerGUI:
         self.merge_button.grid(row=0, column=5, sticky="w", padx=(PAD_M, 0))
         Tooltip(self.merge_button, TOOLTIPS["merge"])
 
+        # Правку имени человек делает чаще всего остального: она заслуживает
+        # кнопки в ряду, а не только клавиши F2 и меню правой кнопки.
+        self.edit_button = ttk.Button(
+            actions,
+            text="Изменить имя",
+            width=BUTTON_WIDTH,
+            command=self._edit_selected_name,
+        )
+        self.edit_button.grid(row=0, column=6, sticky="w", padx=(PAD_M, 0))
+        Tooltip(self.edit_button, TOOLTIPS["edit_name"])
+
         # Служебное — под одной кнопкой: в ряду остаётся только ход работы.
         more = ttk.Menubutton(actions, text="Ещё", width=BUTTON_WIDTH)
         menu = tk.Menu(more, tearoff=0)
@@ -1498,7 +1537,7 @@ class DocRenamerGUI:
         if self.config.update.enabled:
             menu.add_command(label="Проверить обновления", command=self._check_updates)
         more.configure(menu=menu)
-        more.grid(row=0, column=7, sticky="e", padx=(PAD_M, 0))
+        more.grid(row=0, column=8, sticky="e", padx=(PAD_M, 0))
         Tooltip(more, TOOLTIPS["more"])
         self.more_menu = menu
 
@@ -1642,6 +1681,7 @@ class DocRenamerGUI:
             self.apply_button,
             self.undo_button,
             self.merge_button,
+            self.edit_button,
         ):
             button.configure(state=state)
         self.stop_button.configure(state="normal" if busy else "disabled")
@@ -2004,6 +2044,7 @@ class DocRenamerGUI:
     def _show_files(self, files: list[Any]) -> None:
         """Показать найденные файлы сразу после сканирования."""
         self.plan = None
+        self.scanned = list(files)
         self.nodes = {}
         self.tree.delete(*self.tree.get_children())
         self.tree.heading("confidence", text="Размер")
@@ -2180,6 +2221,68 @@ class DocRenamerGUI:
             return "break"
         self._toggle_selected()
         return "break"
+
+    def _selected_path(self) -> Path | None:
+        """Путь того, что выделено в списке: файла или папки."""
+        selection = self.tree.selection()
+        if not selection:
+            return None
+        row = selection[0]
+        if row.startswith("dir:"):
+            return Path(row.removeprefix("dir:"))
+        try:
+            index = int(row)
+        except ValueError:
+            return None
+        if self.plan is not None:
+            if 0 <= index < len(self.plan.items):
+                return self.plan.items[index].source_path
+            return None
+        if 0 <= index < len(self.scanned):
+            return Path(self.scanned[index].path)
+        return None
+
+    def _reveal_selected(self) -> None:
+        """Открыть папку с выбранным файлом в проводнике системы."""
+        path = self._selected_path()
+        if path is None:
+            messagebox.showinfo("Перейти к файлу", "Выберите файл или папку в списке.")
+            return
+        error = reveal(path)
+        if error:
+            messagebox.showinfo("Перейти к файлу", f"{error}\n\n{path}")
+
+    def _reset_session(self) -> None:
+        """Начать сначала: пустые экраны и домашняя папка.
+
+        После переименования на экране остаются список, предпросмотр и журнал
+        прошлой работы, а дальше обычно берут другую папку. Кнопка убирает
+        всё разом, чтобы не путать сделанное с тем, что предстоит.
+        """
+        if self.worker is not None and self.worker.is_alive():
+            messagebox.showinfo(
+                "Сбросить", "Идёт работа. Остановите её кнопкой «Стоп» и повторите."
+            )
+            return
+        self.plan = None
+        self.scanned = []
+        self.nodes = {}
+        self.tree.delete(*self.tree.get_children())
+        self.tree.heading("confidence", text="Уверенность")
+        self.preview_image.grid_remove()
+        self.preview_photo = None
+        self._set_preview_text("Выберите файл в списке — здесь будет его содержимое.")
+        self._set_details("Выберите папку и нажмите «Сканировать».")
+        self.log.configure(state="normal")
+        self.log.delete("1.0", "end")
+        self.log.configure(state="disabled")
+        home = Path.home()
+        self.directory = home if home.is_dir() else None
+        self.directory_var.set(str(self.directory or ""))
+        self.progress.clear()
+        self.status_var.set("Готово к работе")
+        self._update_select_all_label()
+        self._log("Сессия сброшена: список и журнал очищены.")
 
     def _edit_selected_name(self) -> str:
         """Изменить имя выбранной строки (кнопка и клавиша F2)."""

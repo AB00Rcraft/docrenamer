@@ -9,7 +9,8 @@ from __future__ import annotations
 import re
 
 from docrenamer.extractors.common import context_window
-from docrenamer.types import Candidate, EntityRef, Source
+from docrenamer.textquality import comparison_key
+from docrenamer.types import Candidate, EntityRef, Source, nfc
 
 _UP = "А-ЯЁ"
 _LOW = "а-яё"
@@ -103,6 +104,137 @@ STOPWORDS = frozenset(
 
 #: Максимальное расстояние до маркера роли.
 ROLE_WINDOW = 90
+
+#: Падежные окончания фамилий. В одном документе человек встречается во всех
+#: падежах сразу: «должника Иванова», «должнику Иванову», «должником
+#: Ивановым». Это один человек, и в имени файла он обязан стоять один раз.
+#: Окончания перечислены от длинных к коротким — снимается первое подошедшее.
+CASE_ENDINGS: tuple[str, ...] = (
+    "ыми", "ими", "ого", "ому", "ей", "ой", "ом", "ем", "ым", "им",
+    "ах", "ях", "ых", "их", "ую", "ю", "у", "е", "ы", "и", "а", "я",
+)
+
+#: Сколько букв обязано остаться после снятия окончания. Короткие фамилии
+#: («Цой», «Дюма») не склоняются или склоняются иначе — их не трогаем.
+MIN_STEM = 4
+
+#: Окончания фамилии в именительном падеже: так человека и называют.
+NOMINATIVE_ENDINGS: tuple[str, ...] = (
+    "ский", "цкий", "ская", "цкая", "ов", "ев", "ин", "ын", "ко", "ук", "юк", "ых", "их",
+)
+
+#: Окончания отчества в именительном падеже.
+NOMINATIVE_PATRONYMIC: tuple[str, ...] = (
+    "ович", "евич", "ьевич", "ич", "овна", "евна", "ьевна", "ична", "инична",
+)
+
+#: Окончания, по которым видно косвенный падеж фамилии.
+OBLIQUE_ENDINGS: tuple[str, ...] = (
+    "ого", "ому", "ыми", "ими", "ой", "ей", "ом", "ем", "ым", "им", "ую", "ю", "у", "е",
+)
+
+
+def _stem(word: str) -> str:
+    """Основа слова без падежного окончания — только для сравнения.
+
+    Отображаемое значение не меняется: полученная основа никуда, кроме ключа
+    сравнения, не идёт (раздел 14A.10 ТЗ).
+    """
+    text = comparison_key(word).strip(".")
+    for ending in CASE_ENDINGS:
+        if text.endswith(ending) and len(text) - len(ending) >= MIN_STEM:
+            return text[: -len(ending)]
+    return text
+
+
+def person_key(name: str) -> tuple[str, ...]:
+    """Ключ человека: основа фамилии и инициалы.
+
+    «Иванова Ивана Ивановича», «Иванову Ивану Ивановичу» и «Иванов И.И.» дают
+    один ключ. «Иванова Мария Петровна» — другой: однофамильцы остаются
+    разными людьми.
+    """
+    parts = [part for part in re.split(r"[\s\u00a0]+", nfc(name).strip()) if part]
+    if not parts:
+        return ()
+    letters: list[str] = []
+    for token in parts[1:]:
+        if "." in token:
+            letters.extend(ch.casefold() for ch in re.findall(rf"[{_UP}{_LOW}]", token))
+        else:
+            letters.append(_stem(token)[:1])
+    return (_stem(parts[0]), *letters)
+
+
+def nominative_rank(name: str) -> int:
+    """Насколько запись похожа на именительный падеж: 2 — да, 0 — нет.
+
+    Из нескольких найденных в документе форм в имя файла должна попасть та,
+    какой человека называют, а не та, что встретилась первой. Придумывать
+    форму, которой в документе не было, программа не имеет права, поэтому
+    выбор идёт только среди найденного.
+    """
+    parts = [part for part in re.split(r"[\s\u00a0]+", nfc(name).strip()) if part]
+    if not parts:
+        return 0
+    tail = comparison_key(parts[-1])
+    if len(parts) >= 3 and len(tail) > 4:
+        return 2 if tail.endswith(NOMINATIVE_PATRONYMIC) else 0
+    surname = comparison_key(parts[0])
+    if surname.endswith(NOMINATIVE_ENDINGS):
+        return 2
+    if surname.endswith(OBLIQUE_ENDINGS):
+        return 0
+    # «Иванова» — и женский именительный, и мужской родительный. Такая форма
+    # хуже явного именительного, но лучше явно косвенной.
+    return 1 if surname.endswith(("а", "я")) else 2
+
+
+def merge_person_candidates(candidates: list[Candidate]) -> list[Candidate]:
+    """Свести формы одного человека в одну запись.
+
+    Остаётся та форма, какой человека называют: сначала именительный падеж,
+    затем полное ФИО, затем более уверенная и более ранняя запись. Роль и
+    уверенность берутся лучшие из группы — падеж не должен лишать человека
+    роли должника только потому, что она нашлась при другом упоминании.
+    """
+    groups: dict[tuple[str, ...], list[Candidate]] = {}
+    order: list[tuple[str, ...]] = []
+    for candidate in candidates:
+        key = person_key(candidate.value)
+        if not key:
+            continue
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(candidate)
+
+    merged: list[Candidate] = []
+    for key in order:
+        group = groups[key]
+        best = min(
+            group,
+            key=lambda c: (
+                -nominative_rank(c.value),
+                -len(c.value.split()),
+                -c.confidence,
+                c.position,
+            ),
+        )
+        with_role = [c for c in group if c.role_guess]
+        role_source = max(with_role, key=lambda c: c.confidence) if with_role else best
+        merged.append(
+            Candidate(
+                value=best.value,
+                position=min(c.position for c in group),
+                context=best.context,
+                source=best.source,
+                role_guess=role_source.role_guess,
+                confidence=max(c.confidence for c in group),
+                kind=best.kind,
+            )
+        )
+    return merged
 
 
 def _role_for(text: str, position: int) -> tuple[str, float]:
@@ -204,6 +336,7 @@ OFFICIAL_ROLES: frozenset[str] = frozenset({"судья", "следовател�
 
 def select_persons(candidates: list[Candidate], limit: int = 3) -> list[EntityRef]:
     """Выбрать ключевых лиц для имени файла (раздел 42 ТЗ)."""
+    candidates = merge_person_candidates(candidates)
     parties = [c for c in candidates if c.role_guess and c.role_guess not in OFFICIAL_ROLES]
     if parties:
         candidates = parties or candidates
