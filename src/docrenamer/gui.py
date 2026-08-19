@@ -218,6 +218,75 @@ TOOLTIPS: dict[str, str] = {
 }
 
 
+def dark_titlebar(window: tk.Misc) -> None:
+    """Тёмный заголовок окна в Windows.
+
+    Само окно тёмное, а полосу заголовка рисует система — по умолчанию она
+    светлая, а при включённом цветном оформлении ещё и синяя. Над тёмным
+    окном это выглядит как чужая деталь, поэтому системе прямо сообщается,
+    что окно тёмное.
+
+    Настройка появилась в Windows 10 1809: в ранних сборках она под номером
+    19, в поздних и в Windows 11 — под номером 20. Пробуются обе. На других
+    системах и при отказе вызова ничего не происходит: оформление заголовка —
+    не то, ради чего программа имеет право падать.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        window.update_idletasks()
+        handle = ctypes.windll.user32.GetParent(window.winfo_id())  # type: ignore[attr-defined]
+        enabled = ctypes.c_int(1)
+        for attribute in (20, 19):
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(  # type: ignore[attr-defined]
+                handle, attribute, ctypes.byref(enabled), ctypes.sizeof(enabled)
+            )
+    except (AttributeError, OSError, tk.TclError):  # pragma: no cover — только Windows
+        return
+
+
+def dialog_header(window: tk.Toplevel, title: str, subtitle: str = "") -> ttk.Frame:
+    """Шапка окна: название, пояснение и тонкая линия цвета программы.
+
+    Все окна программы устроены одинаково — шапка, тело, ряд кнопок, — иначе
+    каждое выглядит как отдельная программа. Линия под шапкой повторяет
+    полосу хода работы в главном окне и связывает окна между собой.
+    """
+    header = ttk.Frame(window, padding=(PAD_L, PAD_M, PAD_L, PAD_S))
+    header.grid(row=0, column=0, sticky="ew")
+    header.columnconfigure(0, weight=1)
+    ttk.Label(header, text=title, style="Dialog.TLabel").grid(row=0, column=0, sticky="w")
+    if subtitle:
+        ttk.Label(header, text=subtitle, style="Muted.TLabel", justify="left").grid(
+            row=1, column=0, sticky="w", pady=(PAD_XS, 0)
+        )
+    rule = tk.Frame(window, height=2, bg=COLORS["accent"], bd=0, highlightthickness=0)
+    rule.grid(row=1, column=0, sticky="ew")
+    return header
+
+
+def dialog_buttons(
+    parent: tk.Misc, actions: tuple[tuple[str, Callable[[], object], bool], ...]
+) -> ttk.Frame:
+    """Ряд кнопок окна: главное действие — справа, накрашенное.
+
+    Порядок один во всех окнах: сначала отказ, потом действие. Ширина тоже
+    одна — ряд кнопок разной ширины читается как небрежность.
+    """
+    row = ttk.Frame(parent)
+    for column, (text, command, primary) in enumerate(actions):
+        ttk.Button(
+            row,
+            text=text,
+            width=max(BUTTON_WIDTH, len(text) + 2),
+            style="Accent.TButton" if primary else "TButton",
+            command=command,
+        ).grid(row=0, column=column, padx=(0 if column == 0 else PAD_M, 0))
+    return row
+
+
 def center_over(window: tk.Toplevel, parent: tk.Misc) -> None:
     """Поставить окно посреди окна программы, а не в углу экрана."""
     window.update_idletasks()
@@ -454,24 +523,22 @@ class MergeDialog:
         self._marks: dict[str, bool] = {}
 
         self.window = tk.Toplevel(parent)
-        self.window.title("Объединить в один документ")
+        self.window.title(f"{APP_TITLE} — объединение страниц")
         self.window.configure(bg=COLORS["bg"])
         self.window.transient(parent.winfo_toplevel())
+        dark_titlebar(self.window)
         self.window.columnconfigure(0, weight=1)
-        self.window.rowconfigure(1, weight=1)
+        self.window.rowconfigure(2, weight=1)
 
-        ttk.Label(
+        dialog_header(
             self.window,
-            text=(
-                "Отметьте страницы одного документа: щелчок по строке ставит и\n"
-                "снимает отметку. Лишние файлы можно убрать, недостающие — добавить."
-            ),
-            style="Muted.TLabel",
-            justify="left",
-        ).grid(row=0, column=0, sticky="w", padx=PAD_L, pady=(PAD_L, PAD_S))
+            "Объединить в один документ",
+            "Отметьте страницы одного документа: щелчок по строке ставит и\n"
+            "снимает отметку. Лишние файлы можно убрать, недостающие — добавить.",
+        )
 
         frame = ttk.Frame(self.window)
-        frame.grid(row=1, column=0, sticky="nsew", padx=PAD_L)
+        frame.grid(row=2, column=0, sticky="nsew", padx=PAD_L)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
         self.tree = ttk.Treeview(
@@ -493,7 +560,7 @@ class MergeDialog:
             self._insert(item, marked=not chosen or item.source_path in chosen)
 
         edit = ttk.Frame(self.window)
-        edit.grid(row=2, column=0, sticky="w", padx=PAD_L, pady=(PAD_S, 0))
+        edit.grid(row=3, column=0, sticky="w", padx=PAD_L, pady=(PAD_S, 0))
         for column, (text, command) in enumerate(
             (
                 ("Отметить все", lambda: self._mark_all(True)),
@@ -502,30 +569,23 @@ class MergeDialog:
                 ("Убрать из списка", self._remove_rows),
             )
         ):
-            ttk.Button(edit, text=text, width=BUTTON_WIDTH + 3, command=command).grid(
+            ttk.Button(edit, text=text, width=BUTTON_WIDTH, command=command).grid(
                 row=0, column=column, padx=(0, PAD_S)
             )
 
         name_row = ttk.Frame(self.window)
-        name_row.grid(row=3, column=0, sticky="ew", padx=PAD_L, pady=(PAD_M, 0))
+        name_row.grid(row=4, column=0, sticky="ew", padx=PAD_L, pady=(PAD_M, 0))
         name_row.columnconfigure(1, weight=1)
         ttk.Label(name_row, text="Общее имя:").grid(row=0, column=0, sticky="w")
         self.name_var = tk.StringVar(value=suggestion)
         entry = ttk.Entry(name_row, textvariable=self.name_var, font=FONT_UI)
         entry.grid(row=0, column=1, sticky="ew", padx=(PAD_M, 0))
 
-        buttons = ttk.Frame(self.window)
-        buttons.grid(row=4, column=0, sticky="e", padx=PAD_L, pady=PAD_L)
-        ttk.Button(
-            buttons, text="Отмена", width=BUTTON_WIDTH, command=self._cancel
-        ).grid(row=0, column=0)
-        ttk.Button(
-            buttons,
-            text="Объединить",
-            width=BUTTON_WIDTH,
-            style="Accent.TButton",
-            command=self._accept,
-        ).grid(row=0, column=1, padx=(PAD_M, 0))
+        buttons = dialog_buttons(
+            self.window,
+            (("Отмена", self._cancel, False), ("Объединить", self._accept, True)),
+        )
+        buttons.grid(row=5, column=0, sticky="e", padx=PAD_L, pady=PAD_L)
 
         self.window.bind("<Escape>", lambda _event: self._cancel())
         self.window.bind("<Return>", lambda _event: self._accept())
@@ -714,42 +774,33 @@ class DirectoryDialog:
         self._syncing = False
 
         self.window = tk.Toplevel(parent)
-        self.window.title("Выберите папку с документами")
+        self.window.title(f"{APP_TITLE} — выбор папки")
         self.window.configure(bg=COLORS["bg"])
         self.window.transient(parent.winfo_toplevel())
+        dark_titlebar(self.window)
         self.window.columnconfigure(0, weight=1)
-        self.window.rowconfigure(2, weight=1)
+        self.window.rowconfigure(3, weight=1)
 
-        ttk.Label(
+        dialog_header(
             self.window,
-            text=(
-                "Слева — папки, справа — что в выбранной лежит.\n"
-                "Двойной щелчок по папке справа открывает её."
-            ),
-            style="Muted.TLabel",
-            justify="left",
-        ).grid(row=0, column=0, sticky="w", padx=PAD_L, pady=(PAD_L, PAD_S))
+            "Выберите папку с документами",
+            "Слева — папки, справа — что в выбранной лежит.\n"
+            "Двойной щелчок по папке справа открывает её.",
+        )
 
         self._build_path_row()
         self._build_panes()
 
         self.summary_var = tk.StringVar(value="")
         ttk.Label(self.window, textvariable=self.summary_var, style="Muted.TLabel").grid(
-            row=3, column=0, sticky="w", padx=PAD_L, pady=(PAD_S, 0)
+            row=4, column=0, sticky="w", padx=PAD_L, pady=(PAD_S, 0)
         )
 
-        buttons = ttk.Frame(self.window)
-        buttons.grid(row=4, column=0, sticky="e", padx=PAD_L, pady=PAD_L)
-        ttk.Button(buttons, text="Отмена", width=BUTTON_WIDTH, command=self._cancel).grid(
-            row=0, column=0
+        buttons = dialog_buttons(
+            self.window,
+            (("Отмена", self._cancel, False), ("Выбрать эту папку", self._accept, True)),
         )
-        ttk.Button(
-            buttons,
-            text="Выбрать эту папку",
-            width=BUTTON_WIDTH + 6,
-            style="Accent.TButton",
-            command=self._accept,
-        ).grid(row=0, column=1, padx=(PAD_M, 0))
+        buttons.grid(row=5, column=0, sticky="e", padx=PAD_L, pady=PAD_L)
 
         self.window.bind("<Escape>", lambda _event: self._cancel())
         self.window.geometry("{}x{}".format(*self.SIZE))
@@ -762,21 +813,21 @@ class DirectoryDialog:
     def _build_path_row(self) -> None:
         """Строка пути: её можно прочитать, поправить и вставить из буфера."""
         row = ttk.Frame(self.window)
-        row.grid(row=1, column=0, sticky="ew", padx=PAD_L)
+        row.grid(row=2, column=0, sticky="ew", padx=PAD_L, pady=(PAD_S, 0))
         row.columnconfigure(1, weight=1)
         ttk.Label(row, text="Папка:").grid(row=0, column=0, sticky="w")
         self.path_var = tk.StringVar(value=str(self.current))
         entry = ttk.Entry(row, textvariable=self.path_var, font=FONT_UI)
         entry.grid(row=0, column=1, sticky="ew", padx=(PAD_M, PAD_M))
         entry.bind("<Return>", self._on_typed_path)
-        up = ttk.Button(row, text="Вверх", width=BUTTON_WIDTH - 4, command=self._go_up)
+        up = ttk.Button(row, text="Вверх", width=BUTTON_WIDTH, command=self._go_up)
         up.grid(row=0, column=2)
         Tooltip(up, "Подняться на папку выше.")
 
     def _build_panes(self) -> None:
         """Две половины окна: дерево папок и содержимое выбранной."""
         panes = ttk.Frame(self.window)
-        panes.grid(row=2, column=0, sticky="nsew", padx=PAD_L, pady=(PAD_S, 0))
+        panes.grid(row=3, column=0, sticky="nsew", padx=PAD_L, pady=(PAD_S, 0))
         panes.rowconfigure(0, weight=1)
         panes.columnconfigure(0, weight=2, uniform="panes")
         panes.columnconfigure(2, weight=3, uniform="panes")
@@ -993,6 +1044,7 @@ class DocRenamerGUI:
         self._apply_geometry()
         self.root.minsize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         self.root.configure(bg=COLORS["bg"])
+        dark_titlebar(self.root)
         self._set_window_icon()
         self._build_style()
         self._build_widgets()
@@ -1074,6 +1126,11 @@ class DocRenamerGUI:
         )
         style.configure(
             "Muted.TLabel", background=COLORS["bg"], foreground=COLORS["muted"], font=FONT_SMALL
+        )
+        # Заголовок окна: крупнее обычного текста, но мельче названия
+        # программы — окно подчинено главному, а не спорит с ним.
+        style.configure(
+            "Dialog.TLabel", background=COLORS["bg"], foreground=COLORS["text"], font=FONT_UI_BOLD
         )
         style.configure(
             "Section.TLabel", background=COLORS["bg"], foreground=COLORS["muted"], font=FONT_SECTION
@@ -2701,13 +2758,23 @@ class SettingsDialog:
         self.config = config
         self.paths = paths
         self.window = tk.Toplevel(parent)
-        self.window.title("Настройки")
+        self.window.title(f"{APP_TITLE} — настройки")
         self.window.configure(bg=COLORS["bg"])
         self.window.transient(parent)
+        dark_titlebar(self.window)
+        self.window.columnconfigure(0, weight=1)
+        self.window.rowconfigure(2, weight=1)
         self.window.grab_set()
 
-        frame = ttk.Frame(self.window, padding=14)
-        frame.pack(fill="both", expand=True)
+        dialog_header(
+            self.window,
+            "Настройки",
+            "Что читать в файлах и насколько уверенной должна быть программа,\n"
+            "чтобы переименовать файл сама.",
+        )
+
+        frame = ttk.Frame(self.window, padding=(PAD_L, PAD_M, PAD_L, PAD_L))
+        frame.grid(row=2, column=0, sticky="nsew")
 
         self.recursive = tk.BooleanVar(value=config.recursive)
         self.use_ai = tk.BooleanVar(value=config.ai.enabled)
@@ -2731,7 +2798,7 @@ class SettingsDialog:
             Tooltip(box, TOOLTIPS[key])
 
         grid = ttk.Frame(frame)
-        grid.pack(fill="x", pady=(10, 4))
+        grid.pack(fill="x", pady=(PAD_M, PAD_XS))
         ttk.Label(grid, text="Порог уверенности:").grid(row=0, column=0, sticky="w")
         self.threshold = tk.StringVar(value=f"{config.naming.confidence_threshold:.2f}")
         threshold_entry = ttk.Entry(grid, textvariable=self.threshold, width=8)
@@ -2744,23 +2811,23 @@ class SettingsDialog:
         Tooltip(length_entry, TOOLTIPS["set_length"])
 
         model = self.paths.models_dir / Path(config.ai.model_path).name
-        ttk.Label(frame, text="Модель:", style="Muted.TLabel").pack(anchor="w", pady=(10, 0))
+        ttk.Label(frame, text="Модель:", style="Muted.TLabel").pack(anchor="w", pady=(PAD_M, 0))
         ttk.Label(
             frame,
             text=f"{model}  {'— найдена' if model.is_file() else '— не найдена'}",
             style="Muted.TLabel",
         ).pack(anchor="w")
-        ttk.Label(frame, text="OCR:", style="Muted.TLabel").pack(anchor="w", pady=(6, 0))
+        ttk.Label(frame, text="OCR:", style="Muted.TLabel").pack(anchor="w", pady=(PAD_S, 0))
         ttk.Label(frame, text=config.ocr.language_spec, style="Muted.TLabel").pack(anchor="w")
 
-        buttons = ttk.Frame(frame)
-        buttons.pack(fill="x", pady=(14, 0))
-        ttk.Button(buttons, text="Сохранить", style="Accent.TButton", command=self._save).pack(
-            side="right"
+        buttons = dialog_buttons(
+            frame,
+            (("Отмена", self.window.destroy, False), ("Сохранить", self._save, True)),
         )
-        ttk.Button(buttons, text="Отмена", command=self.window.destroy).pack(
-            side="right", padx=6
-        )
+        buttons.pack(anchor="e", pady=(PAD_L, 0))
+
+        self.window.bind("<Escape>", lambda _event: self.window.destroy())
+        center_over(self.window, parent)
 
     def _save(self) -> None:
         try:
