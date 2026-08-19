@@ -194,6 +194,23 @@ def build_folder_items(
     return items
 
 
+@dataclass
+class PlanState:
+    """Память между пачками плана.
+
+    План строится частями, чтобы человек видел имена, не дожидаясь конца
+    работы на всей папке. Но занятость имён и одинаковое содержимое —
+    свойства папки целиком, а не отдельной пачки: без общей памяти вторая
+    пачка предложила бы имя, уже занятое первой, а дубликат остался бы
+    незамеченным.
+    """
+
+    #: Занятые имена по каталогам (в свёрнутом регистре).
+    taken_by_directory: dict[Path, set[str]] = field(default_factory=dict)
+    #: Контрольная сумма → первый файл с таким содержимым.
+    seen_hashes: dict[str, Path] = field(default_factory=dict)
+
+
 def build_plan(
     analyses: Iterable[FileAnalysis],
     *,
@@ -202,6 +219,7 @@ def build_plan(
     app_version: str = "",
     progress: Callable[[int, int], None] | None = None,
     history: RenameHistory | None = None,
+    state: PlanState | None = None,
 ) -> RenamePlan:
     """Построить план по результатам анализа.
 
@@ -224,8 +242,9 @@ def build_plan(
         recursive=config.recursive,
     )
     groups = _related_groups(items_input)
-    taken_by_directory: dict[Path, set[str]] = {}
-    seen_hashes: dict[str, Path] = {}
+    state = state if state is not None else PlanState()
+    taken_by_directory = state.taken_by_directory
+    seen_hashes = state.seen_hashes
     threshold = config.naming.confidence_threshold
     total = len(items_input)
 

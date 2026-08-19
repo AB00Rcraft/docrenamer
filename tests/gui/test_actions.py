@@ -83,3 +83,50 @@ def test_selected_path_after_scan(gui, workdir: Path) -> None:  # type: ignore[n
     gui.tree.selection_set(rows[0])
 
     assert gui._selected_path() == path
+
+
+def test_period_selector_is_in_the_toolbar(gui) -> None:  # type: ignore[no-untyped-def]
+    """Срок выбирается вверху, рядом с папкой и флажками отбора."""
+    from docrenamer.scanner import PERIODS
+
+    assert gui.period_var.get() == PERIODS[0][0]
+    assert gui._period_days() == 0
+
+    gui._set_period("За месяц")
+
+    assert gui._period_days() == 30
+    assert gui.period_var.get() == "За месяц"
+
+
+def test_plan_arrives_in_batches(gui, workdir) -> None:  # type: ignore[no-untyped-def]
+    """Строки дописываются пачками, а не перерисовывают список заново."""
+    from docrenamer.operations.planner import RenamePlan
+    from docrenamer.types import PlanItem
+
+    def item(name: str) -> PlanItem:
+        path = workdir / name
+        path.write_bytes(b"PK\x03\x04")
+        return PlanItem(
+            source_path=path,
+            target_path=path.parent / f"Документ_{name}",
+            proposed_filename=f"Документ_{name}",
+            sha256="0" * 64,
+            size=4,
+            mtime=0.0,
+            confidence=0.9,
+        )
+
+    first = RenamePlan(root=workdir, items=[item("иск.docx"), item("отзыв.docx")])
+    second = RenamePlan(root=workdir, items=[item("акт.docx")])
+
+    gui._append_plan(first)
+    rows_after_first = gui.tree.get_children("")
+    gui._append_plan(second)
+    rows_after_second = gui.tree.get_children("")
+
+    assert len(rows_after_first) == 2
+    assert len(rows_after_second) == 3
+    # Первые строки не пересоздавались: их место в дереве осталось прежним.
+    assert rows_after_second[:2] == rows_after_first
+    assert gui.plan is not None
+    assert len(gui.plan.items) == 3

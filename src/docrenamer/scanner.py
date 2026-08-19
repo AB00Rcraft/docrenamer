@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -85,6 +86,42 @@ class ScanStats:
         if rest:
             parts.append(f"другое: {rest}")
         return " | ".join(parts)
+
+
+#: За какой срок смотреть файлы. Большая папка копится годами, а работа обычно
+#: идёт с тем, что появилось недавно: период отсекает старое, не заставляя
+#: раскладывать папку руками. Ноль — смотреть всё.
+PERIODS: tuple[tuple[str, int], ...] = (
+    ("За всё время", 0),
+    ("За неделю", 7),
+    ("За месяц", 30),
+    ("За три месяца", 90),
+    ("За год", 365),
+)
+
+
+def filter_by_period(
+    files: list[ScannedFile], days: int, *, now: float | None = None
+) -> list[ScannedFile]:
+    """Оставить файлы, изменённые за последние ``days`` дней.
+
+    Ноль или отрицательное число — период не задан, возвращается всё.
+
+    Файл без известного времени изменения остаётся в списке: спрятать файл
+    из-за того, что о нём чего-то не известно, — худшее из решений.
+    """
+    if days <= 0:
+        return list(files)
+    moment = (time.time() if now is None else now) - days * 86400
+    return [found for found in files if not found.mtime or found.mtime >= moment]
+
+
+def period_days(label: str) -> int:
+    """Срок в днях по названию периода. Неизвестное название — весь срок."""
+    for name, days in PERIODS:
+        if name.casefold() == label.casefold():
+            return days
+    return 0
 
 
 def is_ignored_name(name: str, patterns: tuple[str, ...]) -> bool:

@@ -6,7 +6,7 @@ GUI и CLI не содержат бизнес-логики: оба вызыва�
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -15,11 +15,13 @@ from typing import Any
 from docrenamer import __version__
 from docrenamer.analysis import Analyzer, build_analyzer
 from docrenamer.config import Config, load_config, write_json_atomic
+from docrenamer.extractors.series import split_part
 from docrenamer.history import RenameHistory
 from docrenamer.learning import LearningLog
 from docrenamer.logging.manifest import ManifestWriter, new_manifest_path
 from docrenamer.logging.text_log import TextLog, new_log_path
 from docrenamer.operations.planner import (
+    PlanState,
     RenamePlan,
     build_folder_items,
     build_plan,
@@ -29,9 +31,45 @@ from docrenamer.operations.rename import CriticalSafetyError, rename_directory, 
 from docrenamer.operations.scrub import metadata_left, scrub_file
 from docrenamer.operations.undo import UndoReport, undo_session
 from docrenamer.paths import AppPaths, default_paths, new_session_id
-from docrenamer.scanner import Scanner, ScanStats
+from docrenamer.scanner import Scanner, ScanStats, filter_by_period
 from docrenamer.security.temp_cleanup import SessionTemp, cleanup_stale_sessions
 from docrenamer.types import FileAnalysis, PlanItem, ScannedFile, Status, utcstamp
+
+#: Предохранитель: пачка не должна расти без предела, даже если вся папка
+#: состоит из одинаково названных файлов. Вчетверо больше обычного размера —
+#: дальше человек слишком долго ждёт первых имён.
+MAX_BATCH_FACTOR = 4
+
+
+def batch_key(path: Path) -> tuple[Path, str]:
+    """Что нельзя разрывать между пачками: папка и основа имени.
+
+    Тома одного документа и страницы одного скана отличаются только номером, и
+    узнаются они только вместе. Поэтому резать пачку можно там, где меняется
+    папка или основа имени, — а не на любом пятидесятом файле.
+    """
+    stem = path.stem
+    part = split_part(stem)
+    return path.parent, (part[0] if part else stem).casefold()
+
+
+def split_batches(files: list[ScannedFile], size: int) -> Iterator[list[ScannedFile]]:
+    """Разбить файлы на пачки, не разрывая папку и серию страниц."""
+    if size <= 0:
+        yield list(files)
+        return
+    hard_limit = size * MAX_BATCH_FACTOR
+    batch: list[ScannedFile] = []
+    previous: tuple[Path, str] | None = None
+    for found in files:
+        key = batch_key(Path(found.path))
+        if batch and ((len(batch) >= size and key != previous) or len(batch) >= hard_limit):
+            yield batch
+            batch = []
+        batch.append(found)
+        previous = key
+    if batch:
+        yield batch
 
 
 class Mode(StrEnum):
@@ -165,8 +203,18 @@ class Application:
 
     # --- этапы -------------------------------------------------------------
 
-    def scan(self, directory: Path, *, recursive: bool | None = None) -> list[ScannedFile]:
-        """Просканировать каталог."""
+    def scan(
+        self,
+        directory: Path,
+        *,
+        recursive: bool | None = None,
+        period_days: int = 0,
+    ) -> list[ScannedFile]:
+        """Просканировать каталог.
+
+        ``period_days`` отсекает всё, что не менялось дольше заданного срока:
+        в папке, копившейся годами, обычно нужно то, что появилось недавно.
+        """
         scanner = Scanner(
             recursive=self.config.recursive if recursive is None else recursive,
             paths=self.paths,
@@ -182,22 +230,42 @@ class Application:
         self.last_folders = list(scanner.folders)
         self.log_line(f"Найдено файлов: {len(files)}")
         self.log_line(scanner.stats.summary_ru())
+        if period_days > 0:
+            recent = filter_by_period(files, period_days)
+            hidden = len(files) - len(recent)
+            if hidden:
+                self.log_line(
+                    f"Показаны изменённые за последние {period_days} дн.: "
+                    f"{len(recent)}; более старых не показано: {hidden}"
+                )
+            files = recent
         return files
 
-    def analyze(self, files: Iterable[ScannedFile]) -> list[FileAnalysis]:
-        """Проанализировать файлы (раздел 13 ТЗ)."""
+    def analyze(
+        self,
+        files: Iterable[ScannedFile],
+        *,
+        offset: int = 0,
+        total: int | None = None,
+    ) -> list[FileAnalysis]:
+        """Проанализировать файлы (раздел 13 ТЗ).
+
+        ``offset`` и ``total`` нужны при разборе пачками: ход работы считается
+        по всей папке, а не по текущей пачке, иначе полоса дёргалась бы от
+        нуля к сотне на каждой пачке.
+        """
         items = list(files)
         results: list[FileAnalysis] = []
-        total = len(items)
+        overall = len(items) if total is None else total
         for index, scanned in enumerate(items, start=1):
             self._check_cancel()
-            self.progress(index, total, "ANALYZE")
+            self.progress(offset + index, overall, "ANALYZE")
             analysis = self.analyzer.analyze(scanned)
             results.append(analysis)
             # На тысячах файлов строка о каждом делает журнал бесполезным и
             # тормозит окно: подробности пишутся только для небольших папок,
             # для больших — краткие вести о ходе работы.
-            if total <= LOG_EVERY_FILE_LIMIT:
+            if overall <= LOG_EVERY_FILE_LIMIT:
                 if analysis.proposed_filename:
                     label = (
                         str(analysis.document_type.value)
@@ -205,8 +273,8 @@ class Application:
                         else analysis.detected_type
                     )
                     self.log_line(f"→ {label} | confidence {analysis.overall_confidence:.2f}")
-            elif index % LOG_EVERY_N_FILES == 0 or index == total:
-                self.log_line(f"Разобрано: {index} из {total}")
+            elif (offset + index) % LOG_EVERY_N_FILES == 0 or offset + index == overall:
+                self.log_line(f"Разобрано: {offset + index} из {overall}")
 
         # Часть уточнений видна только по каталогу целиком: например, тома
         # одного документа.
@@ -220,10 +288,11 @@ class Application:
         directory: Path,
         *,
         recursive: bool | None = None,
+        period_days: int = 0,
         save_plan_to: Path | None = None,
     ) -> RenamePlan:
         """Построить план без изменений на диске (раздел 8 ТЗ)."""
-        files = self.scan(directory, recursive=recursive)
+        files = self.scan(directory, recursive=recursive, period_days=period_days)
         analyses = self.analyze(files)
         plan = build_plan(
             analyses,
@@ -233,22 +302,81 @@ class Application:
             progress=lambda done, total: self.progress(done, total, "PLAN"),
             history=RenameHistory.load(self.paths.manifests_dir),
         )
-        if self.config.naming.rename_folders and self.last_folders:
-            folder_analyses = [
-                self.analyzer.analyze_folder(folder, analyses)
-                # Самые глубокие папки идут первыми: переименование родителя
-                # делает пути внутри недействительными.
-                for folder in sorted(
-                    self.last_folders, key=lambda p: len(p.parts), reverse=True
-                )
-            ]
-            folder_analyses = _drop_duplicate_folder_names(folder_analyses)
-            plan.items.extend(build_folder_items(folder_analyses, config=self.config))
+        plan.items.extend(self._folder_items(analyses))
         if save_plan_to:
             plan.save(Path(save_plan_to))
         for key, value in plan.counters().items():
             self.log_line(f"{key}: {value}")
         return plan
+
+    def _folder_items(self, analyses: list[FileAnalysis]) -> list[PlanItem]:
+        """Строки плана для вложенных папок — по тому, что в них лежит."""
+        if not (self.config.naming.rename_folders and self.last_folders):
+            return []
+        folder_analyses = [
+            self.analyzer.analyze_folder(folder, analyses)
+            # Самые глубокие папки идут первыми: переименование родителя
+            # делает пути внутри недействительными.
+            for folder in sorted(self.last_folders, key=lambda p: len(p.parts), reverse=True)
+        ]
+        folder_analyses = _drop_duplicate_folder_names(folder_analyses)
+        return build_folder_items(folder_analyses, config=self.config)
+
+    def preview_batches(
+        self,
+        directory: Path,
+        *,
+        files: list[ScannedFile] | None = None,
+        recursive: bool | None = None,
+        period_days: int = 0,
+        batch_size: int | None = None,
+    ) -> Iterator[RenamePlan]:
+        """План частями: каждая пачка готова к показу сразу.
+
+        На папке в тысячи файлов ждать общего итога незачем: имена первых
+        полусотни можно проверять, пока программа разбирает остальные. Пачки
+        нарезаются по границам папок и серий, а занятость имён и одинаковое
+        содержимое считаются по всей папке — за это отвечает общая память
+        ``PlanState``.
+
+        Последней приходит пачка со строками для папок: их имена зависят от
+        всего, что в папках лежит, и раньше конца работы неизвестны.
+        """
+        found = (
+            self.scan(directory, recursive=recursive, period_days=period_days)
+            if files is None
+            else list(files)
+        )
+        size = self.config.limits.batch_size if batch_size is None else batch_size
+        state = PlanState()
+        history = RenameHistory.load(self.paths.manifests_dir)
+        analyses: list[FileAnalysis] = []
+        done = 0
+        total = len(found)
+        for batch in split_batches(found, size):
+            self._check_cancel()
+            part = self.analyze(batch, offset=done, total=total)
+            done += len(batch)
+            analyses.extend(part)
+            yield build_plan(
+                part,
+                config=self.config,
+                root=Path(directory),
+                app_version=__version__,
+                history=history,
+                state=state,
+            )
+        folder_items = self._folder_items(analyses)
+        if folder_items:
+            folders = RenamePlan(
+                root=Path(directory),
+                created_at=utcstamp(),
+                config_fingerprint=self.config.fingerprint(),
+                app_version=__version__,
+                recursive=self.config.recursive,
+            )
+            folders.items.extend(folder_items)
+            yield folders
 
     def apply(self, plan: RenamePlan, *, write_log: bool = True) -> ApplyReport:
         """Исполнить утверждённый план (разделы 48, 51 ТЗ)."""
@@ -503,11 +631,13 @@ class Application:
         )
         return target
 
-    def forensic(self, directory: Path, *, output_dir: Path | None = None) -> dict[str, Path]:
+    def forensic(
+        self, directory: Path, *, output_dir: Path | None = None, period_days: int = 0
+    ) -> dict[str, Path]:
         """Режим FORENSIC: только отчёты, без изменений (раздел 8 ТЗ)."""
         target_dir = Path(output_dir) if output_dir else self.paths.manifests_dir
         target_dir.mkdir(parents=True, exist_ok=True)
-        files = self.scan(directory)
+        files = self.scan(directory, period_days=period_days)
         analyses = self.analyze(files)
         plan = build_plan(
             analyses, config=self.config, root=Path(directory), app_version=__version__

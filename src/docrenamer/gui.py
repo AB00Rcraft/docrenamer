@@ -15,6 +15,7 @@ import queue
 import threading
 import tkinter as tk
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
@@ -35,7 +36,6 @@ from docrenamer.learning import LearningLog
 from docrenamer.logging.manifest import find_incomplete_sessions
 from docrenamer.operations.planner import (
     RenamePlan,
-    build_plan,
     make_plan_item,
     merge_as_document,
     set_manual_name,
@@ -57,6 +57,7 @@ from docrenamer.preview import (
     thumbnail_png,
 )
 from docrenamer.reveal import reveal
+from docrenamer.scanner import PERIODS, period_days
 from docrenamer.security.subprocess_safe import hidden_process_options
 from docrenamer.types import PlanItem
 
@@ -181,6 +182,9 @@ TOOLTIPS: dict[str, str] = {
             "Предпросмотр — показать предлагаемые имена.\n"
             "Применить — переименовать по плану.",
     "recursive": "Обрабатывать файлы и во вложенных папках.",
+    "period": "Смотреть только то, что менялось за выбранный срок.\n"
+              "Большая папка копится годами — так в неё не приходится\n"
+              "лезть целиком.",
     "reset": "Начать сначала: очистить список, предпросмотр и журнал\n"
              "и вернуться в домашнюю папку.",
     "reveal": "Открыть папку с этим файлом в проводнике.",
@@ -245,6 +249,25 @@ def dark_titlebar(window: tk.Misc) -> None:
             )
     except (AttributeError, OSError, tk.TclError):  # pragma: no cover — только Windows
         return
+
+
+def styled_menu(parent: tk.Misc) -> tk.Menu:
+    """Меню в цветах программы.
+
+    Меню рисует система, и по умолчанию оно светлое: на тёмном окне это
+    выглядит как чужая деталь. Цвета задаются явно — все меню программы
+    одинаковые.
+    """
+    return tk.Menu(
+        parent,
+        tearoff=0,
+        background=COLORS["panel"],
+        foreground=COLORS["text"],
+        activebackground=COLORS["accent"],
+        activeforeground=COLORS["accent_text"],
+        borderwidth=0,
+        font=FONT_UI,
+    )
 
 
 def dialog_header(window: tk.Toplevel, title: str, subtitle: str = "") -> ttk.Frame:
@@ -1320,6 +1343,19 @@ class DocRenamerGUI:
             command=self._apply_only_new,
         )
         only_new.grid(row=0, column=4, sticky="w", padx=(PAD_L, 0))
+
+        # Период — рядом с флажками отбора: это тоже про то, какие файлы
+        # берутся в работу, а не про то, что с ними делать.
+        self.period_var = tk.StringVar(value=PERIODS[0][0])
+        period = ttk.Menubutton(modes, textvariable=self.period_var, width=BUTTON_WIDTH)
+        period_menu = styled_menu(period)
+        for label, _days in PERIODS:
+            # partial, а не lambda: замыкание в цикле запомнило бы последнее
+            # значение, и все пункты меню выбирали бы один и тот же период.
+            period_menu.add_command(label=label, command=partial(self._set_period, label))
+        period.configure(menu=period_menu)
+        period.grid(row=0, column=5, sticky="w", padx=(PAD_L, 0))
+        Tooltip(period, TOOLTIPS["period"])
         Tooltip(only_new, TOOLTIPS["only_new"])
 
     def _build_workspace(self) -> None:
@@ -1391,7 +1427,7 @@ class DocRenamerGUI:
         self.tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
 
         # Меню строки: всё, что делается с конкретным файлом.
-        self.row_menu = tk.Menu(self.tree, tearoff=0)
+        self.row_menu = styled_menu(self.tree)
         self.row_menu.add_command(label="Изменить имя…   F2", command=self._edit_selected_name)
         self.row_menu.add_command(label="Пересканировать   F5", command=self._rescan_selected)
         self.row_menu.add_separator()
@@ -1585,7 +1621,7 @@ class DocRenamerGUI:
 
         # Служебное — под одной кнопкой: в ряду остаётся только ход работы.
         more = ttk.Menubutton(actions, text="Ещё", width=BUTTON_WIDTH)
-        menu = tk.Menu(more, tearoff=0)
+        menu = styled_menu(more)
         menu.add_command(label="Самопроверка", command=self._selftest)
         menu.add_command(label="Журнал работы", command=self._open_logs)
         menu.add_command(label="Отчёт об именах", command=self._send_feedback)
@@ -1597,6 +1633,19 @@ class DocRenamerGUI:
         more.grid(row=0, column=8, sticky="e", padx=(PAD_M, 0))
         Tooltip(more, TOOLTIPS["more"])
         self.more_menu = menu
+
+    def _set_period(self, label: str) -> None:
+        """Выбрать срок, за который смотреть файлы."""
+        self.period_var.set(label)
+        days = period_days(label)
+        self._log(
+            "Показываются файлы за всё время."
+            if days <= 0
+            else f"Показываются файлы, изменённые за последние {days} дн."
+        )
+
+    def _period_days(self) -> int:
+        return period_days(self.period_var.get())
 
     def _apply_only_new(self) -> None:
         """Показывать ли файлы, которые программа уже переименовывала."""
@@ -1705,6 +1754,8 @@ class DocRenamerGUI:
                     self._show_files(payload)
                 elif kind == "plan":
                     self._show_plan(payload)
+                elif kind == "plan_batch":
+                    self._append_plan(payload)
                 elif kind == "rows":
                     self._refresh_rows(list(payload))
                 elif kind == "plan_cleared":
@@ -1794,8 +1845,10 @@ class DocRenamerGUI:
             return
         self.config.recursive = self.recursive_var.get()
 
+        period = self._period_days()
+
         def work() -> None:
-            files = self.app.scan(directory)
+            files = self.app.scan(directory, period_days=period)
             # Список показывается сразу: человек видит, с чем предстоит работа,
             # ещё до разбора содержимого.
             self.events.put(("files", files))
@@ -1809,18 +1862,19 @@ class DocRenamerGUI:
             return
         self.config.recursive = self.recursive_var.get()
 
+        period = self._period_days()
+
         def work() -> None:
-            files = self.app.scan(directory)
+            files = self.app.scan(directory, period_days=period)
             self.events.put(("files", files))
-            analyses = self.app.analyze(files)
-            plan = build_plan(
-                analyses,
-                config=self.config,
-                root=directory,
-                app_version=__version__,
-            )
-            self.events.put(("plan", plan))
-            self.events.put(("done", "Предпросмотр готов"))
+            # План приходит пачками: имена первых файлов можно проверять, пока
+            # программа разбирает остальные. Пачка не рвёт ни папку, ни серию
+            # страниц, а занятость имён считается по всей папке.
+            batches = 0
+            for batch in self.app.preview_batches(directory, files=files):
+                batches += 1
+                self.events.put(("plan_batch", batch))
+            self.events.put(("done", f"Предпросмотр готов, пачек: {batches}"))
 
         self._run_async(work)
 
@@ -2186,6 +2240,52 @@ class DocRenamerGUI:
         self._update_select_all_label()
         for key, value in plan.counters().items():
             self._log(f"{key}: {value}")
+
+    def _append_plan(self, batch: RenamePlan) -> None:
+        """Показать очередную пачку плана, не перерисовывая уже показанное.
+
+        Строки папок приходят последней пачкой: их место в дереве — над своим
+        содержимым, поэтому дерево на этом шаге собирается заново. Файлы же
+        просто дописываются вниз, и окно остаётся живым на любой папке.
+        """
+        first = self.plan is None
+        if first:
+            self.plan = RenamePlan(
+                root=batch.root,
+                created_at=batch.created_at,
+                config_fingerprint=batch.config_fingerprint,
+                app_version=batch.app_version,
+                recursive=batch.recursive,
+            )
+            self.nodes = {}
+            self.tree.delete(*self.tree.get_children())
+            self.tree.heading("confidence", text="Уверенность")
+        plan = self.plan
+        if plan is None:  # pragma: no cover — защита от гонки при сбросе
+            return
+        start = len(plan.items)
+        plan.items.extend(batch.items)
+        if any(item.is_folder for item in batch.items):
+            # Папка в дереве стоит над своим содержимым, поэтому её появление
+            # меняет порядок строк: список собирается заново — один раз, в
+            # самом конце работы.
+            self._show_plan(plan)
+            return
+        for offset, item in enumerate(batch.items):
+            parent = self._folder_node(item.source_path.parent, plan.root)
+            self.tree.insert(
+                parent,
+                "end",
+                iid=str(start + offset),
+                text=plan_row_label(item),
+                values=plan_row_values(item),
+                tags=(row_tag(item),),
+            )
+        self._update_select_all_label()
+        if first:
+            self._set_details(
+                "Имена появляются по мере разбора — проверять их можно, не дожидаясь конца."
+            )
 
     def _folder_node(
         self,

@@ -315,6 +315,10 @@ class LimitsConfig:
     max_text_chars_total: int = 400_000
     subprocess_timeout_seconds: int = 120
     max_archive_entries: int = 5000
+    #: По скольку файлов разбирать за раз. Результат показывается пачками:
+    #: на папке в тысячи файлов человек начинает проверять имена сразу, а не
+    #: через четверть часа. Пачка не рвёт ни папку, ни серию страниц.
+    batch_size: int = 50
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LimitsConfig:
@@ -343,6 +347,8 @@ class LimitsConfig:
             cfg.max_archive_entries = _as_int(
                 data["max_archive_entries"], "limits.max_archive_entries", 1, 1_000_000
             )
+        if "batch_size" in data:
+            cfg.batch_size = _as_int(data["batch_size"], "limits.batch_size", 1, 10_000)
         return cfg
 
 

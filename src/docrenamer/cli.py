@@ -66,6 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", metavar="PATH", help="путь к config.json")
     parser.add_argument("--no-ai", action="store_true", help="без локальной модели")
     parser.add_argument("--no-ocr", action="store_true", help="без распознавания текста")
+    parser.add_argument(
+        "--period",
+        type=int,
+        default=0,
+        metavar="ДНЕЙ",
+        help="брать только файлы, изменённые за последние N дней (0 — все)",
+    )
     parser.add_argument("--verbose", action="store_true", help="подробный вывод")
     parser.add_argument("--gui", action="store_true", help="запустить графический интерфейс")
     parser.add_argument(
@@ -278,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_ERROR
 
         if args.scrub or args.scrub_replace:
-            files = [scanned.path for scanned in app.scan(directory)]
+            files = [scanned.path for scanned in app.scan(directory, period_days=args.period)]
             scrub_report = app.scrub(files, replace=args.scrub_replace)
             for name, value in scrub_report.counters().items():
                 print(f"{name}: {value}")
@@ -287,13 +294,15 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_ERROR if scrub_report.failed else EXIT_OK
 
         if args.forensic or config.forensic_mode:
-            outputs = app.forensic(directory)
+            outputs = app.forensic(directory, period_days=args.period)
             for name, path in outputs.items():
                 print(f"{name}: {path}")
             return EXIT_OK
 
         plan = app.preview(
-            directory, save_plan_to=Path(args.save_plan) if args.save_plan else None
+            directory,
+            period_days=args.period,
+            save_plan_to=Path(args.save_plan) if args.save_plan else None,
         )
         _print_plan(plan, args.verbose)
 
