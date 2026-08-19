@@ -163,6 +163,11 @@ jobs:
       - name: Проверить, что графическое окно собирается
         continue-on-error: true
         shell: pwsh
+        # Консоль агента живёт в cp1252 и на русском выводе падает. Проверка
+        # окна при этом уже выполнена — сообщать о ней было нечем.
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: |
           $code = @'
           import tkinter, docrenamer.gui as gui
