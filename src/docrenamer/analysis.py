@@ -38,6 +38,7 @@ from docrenamer.naming.dates import format_date_for_name
 from docrenamer.paths import AppPaths, default_paths
 from docrenamer.security.limits import Limits
 from docrenamer.security.temp_cleanup import SessionTemp
+from docrenamer.technical import classify_technical
 from docrenamer.textquality import comparison_key
 from docrenamer.types import (
     Candidate,
@@ -75,6 +76,58 @@ SCANNED_PAGE_KINDS: frozenset[str] = frozenset({"pdf", "tiff", "tif"})
 
 #: Виды файлов, которые разбираются как таблицы.
 SPREADSHEET_KINDS: frozenset[str] = frozenset({"xlsx", "xlsm", "xls", "csv", "ods"})
+
+#: Личные документы: их название побеждает, только когда перед нами сам
+#: документ, а не текст, где паспорт лишь упомянут строкой сведений.
+IDENTITY_TYPES: frozenset[str] = frozenset(
+    {
+        "Паспорт",
+        "Заграничный паспорт",
+        "Водительское удостоверение",
+        "СНИЛС",
+        "Свидетельство ИНН",
+        "Полис ОМС",
+        "Свидетельство о рождении",
+        "Свидетельство о браке",
+        "Военный билет",
+        "Свидетельство о регистрации ТС",
+        "Служебное удостоверение",
+        "Студенческий билет",
+    }
+)
+
+#: Длина текста, после которой снимок документа заканчивается и начинается
+#: документ о человеке: в самом паспорте написано немного.
+IDENTITY_TEXT_LIMIT = 1200
+
+#: Разделы, из которых состоит справка по человеку. Паспорт — лишь один из
+#: них, и по нему одному называть весь документ нельзя.
+DOSSIER_SECTIONS: tuple[tuple[str, ...], ...] = (
+    ("дата рождения", "год рождения"),
+    ("место рождения",),
+    ("паспорт", "паспортные данные"),
+    ("инн",),
+    ("снилс",),
+    ("адрес регистрации", "зарегистрирован по адресу", "место жительства"),
+    ("телефон", "контактные данные", "номера телефонов"),
+    ("электронная почта", "e-mail", "почтовый ящик"),
+    ("транспортные средства", "автомобил"),
+    ("недвижимость", "объекты недвижимости", "право собственности"),
+    ("судимость", "привлекался", "исполнительные производства"),
+    ("родственники", "связи", "супруг"),
+    ("место работы", "трудовая деятельность", "должность"),
+    ("социальные сети", "аккаунты", "профили"),
+)
+
+#: Сколько разделов должно совпасть, чтобы документ считался справкой по
+#: человеку, а не самим удостоверением.
+DOSSIER_MIN_SECTIONS = 4
+
+#: Столько разделов бывает только в справке: сам паспорт так не выглядит.
+DOSSIER_MANY_SECTIONS = 5
+
+#: Как называется общая справка по человеку.
+DOSSIER_TYPE = "Справка установочная"
 
 #: Как называется папка, в которой лежат разные виды документов одного дела
 #: или одного человека.
@@ -186,6 +239,15 @@ class Pipeline:
         mismatch = check_extension(path, detected)
         if mismatch:
             analysis.add_status(mismatch)
+
+        technical = classify_technical(path)
+        if technical:
+            # Имя служебного файла — часть работы системы, а не описание
+            # содержимого. Такой файл показывается, но не переименовывается.
+            analysis.add_status(Status.TECHNICAL_FILE)
+            analysis.metadata["technical_reason"] = technical
+            analysis.error = f"Служебный файл: {technical}."
+            return analysis
 
         if scanned.size > self.limits.max_single_file_bytes:
             analysis.add_status(Status.LIMIT_EXCEEDED)
@@ -683,6 +745,31 @@ class Pipeline:
 
     # --- ветви по категориям ----------------------------------------------
 
+    def _dossier_sections(self, text: str) -> list[str]:
+        """Какие разделы сведений о человеке есть в тексте."""
+        lowered = text.casefold()
+        found: list[str] = []
+        for section in DOSSIER_SECTIONS:
+            for marker in section:
+                if marker in lowered:
+                    found.append(section[0])
+                    break
+        return found
+
+    def _looks_like_dossier(self, text: str, sections: list[str]) -> bool:
+        """Похож ли документ на общую справку по человеку.
+
+        В самом паспорте написано немного, и «паспорт» там — заголовок. В
+        справке по человеку паспорт — одна строка среди даты рождения, ИНН,
+        адреса, телефонов и имущества. Считаем разделы: если их много, перед
+        нами справка, как бы ни называлась первая строка.
+        """
+        if len(sections) >= DOSSIER_MANY_SECTIONS:
+            # Столько разных сведений о человеке в самом удостоверении не
+            # печатают: это справка, какой бы короткой она ни была.
+            return True
+        return len(text) > IDENTITY_TEXT_LIMIT and len(sections) >= DOSSIER_MIN_SECTIONS
+
     def _enrich_document(self, analysis: FileAnalysis, text: str) -> None:
         """Документы: тип, дата, номера, участники, предмет."""
         filename = analysis.source_path.name
@@ -690,7 +777,27 @@ class Pipeline:
         type_candidates = self.type_matcher.match(text, filename=filename)
         analysis.candidates["document_type"] = type_candidates[:5]
         best_type = select_document_type(type_candidates)
-        if best_type is not None:
+
+        # Справка по человеку — не паспорт. Паспорт в ней лишь одна строка
+        # среди даты рождения, ИНН, адреса, телефонов и имущества, и называть
+        # весь документ по этой строке неверно.
+        sections = self._dossier_sections(text)
+        if (
+            best_type is not None
+            and best_type.value in IDENTITY_TYPES
+            and self._looks_like_dossier(text, sections)
+        ):
+            analysis.metadata["dossier_sections"] = sections
+            analysis.document_type = Field(
+                value=self.type_matcher.abbreviation_for(DOSSIER_TYPE),
+                source=Source.TEXT,
+                evidence=f"сведения о человеке: {', '.join(sections[:5])}",
+                confidence=0.86,
+            )
+            analysis.metadata["document_type_canonical"] = DOSSIER_TYPE
+            analysis.metadata["dossier"] = True
+            best_type = None
+        elif best_type is not None:
             analysis.document_type = Field(
                 value=self.type_matcher.abbreviation_for(best_type.value),
                 source=Source.TEXT,
@@ -736,9 +843,22 @@ class Pipeline:
         # фиктивна (2013 год). Поэтому она приравнена к запасному источнику и
         # никогда не перебивает дату, найденную в самом тексте.
         best_date = select_document_date(date_candidates)
-        if best_date is None and self.config.naming.allow_filesystem_date_fallback:
+        if analysis.metadata.get("dossier"):
+            # В справке по человеку дат много, и почти все они чужие: выдачи
+            # паспорта, покупки квартиры, рождения. Годится только дата
+            # составления самой справки, а если её нет — лучше без даты.
+            best_date = _dossier_date(date_candidates)
+        if (
+            best_date is None
+            and self.config.naming.allow_filesystem_date_fallback
+            and not analysis.metadata.get("dossier")
+        ):
             best_date = self._file_property_date(analysis)
-        if best_date is None and self.config.naming.allow_filesystem_date_fallback:
+        if (
+            best_date is None
+            and self.config.naming.allow_filesystem_date_fallback
+            and not analysis.metadata.get("dossier")
+        ):
             best_date = self._filesystem_date(analysis)
         if best_date is not None:
             analysis.document_date = Field(
@@ -783,9 +903,15 @@ class Pipeline:
         organization_candidates = extract_organizations(text)
         analysis.candidates["persons"] = person_candidates[:10]
         analysis.candidates["organizations"] = organization_candidates[:10]
-        analysis.main_persons = select_persons(
-            person_candidates, self.config.naming.max_persons_in_filename
-        )
+        if analysis.metadata.get("dossier"):
+            # Справка составлена об одном человеке, и это тот, с кого она
+            # начинается. Остальные — родственники и связи, в имя им не надо.
+            main = min(person_candidates, key=lambda c: c.position, default=None)
+            analysis.main_persons = select_persons([main], 1) if main is not None else []
+        else:
+            analysis.main_persons = select_persons(
+                person_candidates, self.config.naming.max_persons_in_filename
+            )
         analysis.main_organizations = select_organizations(
             organization_candidates, self.config.naming.max_organizations_in_filename
         )
@@ -798,7 +924,9 @@ class Pipeline:
             entry.canonical_name for entry in self.type_matcher.entries
         ]
         subject = self._subject_for_document(analysis, text)
-        if subject is None:
+        if subject is None and not analysis.metadata.get("dossier"):
+            # У справки по человеку уже есть и вид, и о ком она: слова из
+            # прежнего имени («report», «скан2») ничего к этому не добавляют.
             subject = self._subject_from_filename(analysis)
         if subject is not None:
             analysis.subject = subject
@@ -1336,6 +1464,29 @@ def _folder_confidence(analysis: FileAnalysis, files_inside: int) -> float:
     if files_inside >= 3:
         score += 0.05
     return round(min(0.97, score), 4)
+
+
+#: Слова, рядом с которыми стоит дата составления справки.
+DOSSIER_DATE_MARKERS: tuple[str, ...] = (
+    "составлен",
+    "подготовлен",
+    "по состоянию на",
+    "дата составления",
+    "дата отчёта",
+    "дата отчета",
+    "справка от",
+    "отчёт от",
+    "отчет от",
+)
+
+
+def _dossier_date(candidates: list[Candidate]) -> Candidate | None:
+    """Дата составления справки, а не дата из чужих сведений о человеке."""
+    for candidate in candidates:
+        left = str(candidate.context or "").casefold()
+        if any(marker in left for marker in DOSSIER_DATE_MARKERS):
+            return candidate
+    return None
 
 
 def _strip_words(text: str, remove: str) -> str:

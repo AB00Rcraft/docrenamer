@@ -303,7 +303,17 @@ def build_plan(
             item.add_status(related)
 
         if not proposed:
-            if analysis.has_status(Status.NAME_UNCHANGED):
+            if analysis.has_status(Status.TECHNICAL_FILE):
+                # Имя служебного файла — часть работы системы или программы.
+                # Строку показываем, но ни отметки, ни предложения у неё нет.
+                item.status = Status.TECHNICAL_FILE.value
+                reason = str((analysis.metadata or {}).get("technical_reason") or "")
+                item.message = (
+                    f"Служебный файл ({reason}) — программа его не трогает."
+                    if reason
+                    else "Служебный файл — программа его не трогает."
+                )
+            elif analysis.has_status(Status.NAME_UNCHANGED):
                 item.status = Status.NAME_UNCHANGED.value
                 item.message = item.message or (
                     "Имя уже хорошее — предложить лучше нечего."

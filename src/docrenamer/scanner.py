@@ -42,7 +42,6 @@ EXTRA_IGNORE_PATTERNS: tuple[str, ...] = (
     "*.crdownload",
     "*.part",
     "*.partial",
-    "*.lnk",
 )
 
 #: Системные каталоги, в которые запрещено заходить.

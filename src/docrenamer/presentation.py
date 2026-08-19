@@ -50,12 +50,14 @@ def format_plan_row(item: PlanItem) -> tuple[str, str, str, str, str]:
     )
 
 
-def plan_row_values(item: PlanItem) -> tuple[str, str, str, str, str]:
-    """Значения строки дерева: имя стоит в колонке дерева, отдельно от них."""
-    from docrenamer.preview import metadata_cell
+def plan_row_values(item: PlanItem) -> tuple[str, str, str, str]:
+    """Значения строки дерева: имя стоит в колонке дерева, отдельно от них.
 
+    Размер и время изменения в списке не показываются: им место в карточке
+    файла, где видно и контрольную сумму, а список от этого только теснее.
+    """
     mark, _current, proposed, confidence, status = format_plan_row(item)
-    return (mark, proposed, confidence, status, metadata_cell(item))
+    return (mark, proposed, confidence, status)
 
 
 def plan_row_label(item: PlanItem) -> str:

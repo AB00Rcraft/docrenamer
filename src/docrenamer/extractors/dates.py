@@ -66,6 +66,21 @@ DOCUMENT_DATE_MARKERS = (
     "город",
 )
 
+#: Маркеры дат, которые датой документа быть не могут: они описывают человека
+#: или сам предмет, а не время составления. Дата рождения в справке по
+#: человеку стоит в первых строках и иначе побеждает по положению в тексте.
+PERSONAL_DATE_MARKERS: tuple[str, ...] = (
+    "рождения",
+    "родился",
+    "родилась",
+    "дата рожд",
+    "г.р.",
+    "года рождения",
+    "срок действия",
+    "действителен до",
+    "годен до",
+)
+
 #: Разумные границы: документы вне этого диапазона почти всегда ошибка разбора.
 MIN_YEAR = 1900
 MAX_YEAR = 2100
@@ -74,7 +89,12 @@ MAX_YEAR = 2100
 def _make(value: date, match: re.Match[str], text: str, confidence: float, kind: str) -> Candidate:
     start, end = match.span()
     snippet = context_window(text, start, end)
-    role = "document_date" if _looks_like_document_date(text, start) else "date"
+    if _looks_like_personal_date(text, start):
+        role = "personal_date"
+    elif _looks_like_document_date(text, start):
+        role = "document_date"
+    else:
+        role = "date"
     return Candidate(
         value=value.isoformat(),
         position=start,
@@ -84,6 +104,12 @@ def _make(value: date, match: re.Match[str], text: str, confidence: float, kind:
         confidence=min(0.99, confidence + head_position_bonus(start, len(text))),
         kind=kind,
     )
+
+
+def _looks_like_personal_date(text: str, position: int) -> bool:
+    """Дата рождения или срок действия — не дата документа."""
+    left = text[max(0, position - 40) : position].lower()
+    return any(marker in left for marker in PERSONAL_DATE_MARKERS)
 
 
 def _looks_like_document_date(text: str, position: int) -> bool:
@@ -192,7 +218,9 @@ def select_document_date(
             kind="metadata",
         )
 
-    usable = [c for c in candidates if c.role_guess != "ambiguous_year"]
+    usable = [
+        c for c in candidates if c.role_guess not in ("ambiguous_year", "personal_date")
+    ]
     if not usable:
         return None
 

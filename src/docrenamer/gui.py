@@ -41,7 +41,6 @@ from docrenamer.presentation import (
 from docrenamer.preview import (
     file_card,
     folder_preview,
-    format_stamp,
     text_preview,
     thumbnail_png,
 )
@@ -83,16 +82,23 @@ FONT_SECTION = (FONT_FAMILY, 9, "bold")
 FONT_MONO = (FONT_MONO_FAMILY, 10)
 
 #: Размеры элементов. Все кнопки одной ширины — ряд выглядит выверенным.
-BUTTON_WIDTH = 15
+BUTTON_WIDTH = 13
 ROW_HEIGHT = 26
-DETAILS_HEIGHT = 8
+DETAILS_HEIGHT = 7
 PROGRESS_HEIGHT = 6
-LEFT_MIN_WIDTH = 620
-RIGHT_MIN_WIDTH = 360
-WINDOW_WIDTH = 1180
-WINDOW_HEIGHT = 720
-WINDOW_MIN_WIDTH = 940
-WINDOW_MIN_HEIGHT = 600
+LEFT_MIN_WIDTH = 660
+RIGHT_MIN_WIDTH = 430
+#: Желаемый размер окна. При запуске он ужимается под экран: на ноутбуке с
+#: невысоким разрешением окно должно помещаться целиком, а не уезжать за край.
+WINDOW_WIDTH = 1320
+WINDOW_HEIGHT = 860
+WINDOW_MIN_WIDTH = 1000
+WINDOW_MIN_HEIGHT = 640
+
+#: Наименьшая высота панелей правой колонки: предпросмотр, сведения, журнал.
+PREVIEW_MIN_HEIGHT = 220
+DETAILS_MIN_HEIGHT = 150
+LOG_MIN_HEIGHT = 110
 
 #: Название программы для человека. Латинское DocRenamer остаётся именем
 #: файлов и репозитория, но в глаза пользователю смотрит русское.
@@ -225,6 +231,213 @@ class Tooltip:
             self.window = None
 
 
+class CenterProgress:
+    """Тонкая полоса хода работы, расходящаяся от середины окна.
+
+    Обычная полоса прогресса занимает высоту и притягивает взгляд вниз. Здесь
+    достаточно знать, что команда выполняется, поэтому полоса тонкая, стоит
+    под заголовком и растёт от середины в обе стороны. Когда работы нет, её
+    не видно вовсе.
+    """
+
+    HEIGHT = 3
+    #: Шаг «дыхания», когда общее число шагов заранее неизвестно.
+    PULSE_STEP = 0.08
+
+    def __init__(self, parent: tk.Misc) -> None:
+        self.canvas = tk.Canvas(
+            parent,
+            height=self.HEIGHT,
+            bg=COLORS["bg"],
+            highlightthickness=0,
+            bd=0,
+        )
+        self.fraction = 0.0
+        self._pulse = 0.0
+        self._pulse_up = True
+        self._job: str | None = None
+        self.canvas.bind("<Configure>", lambda _event: self._draw())
+
+    def grid(self, **options: object) -> None:
+        self.canvas.grid(**options)  # type: ignore[arg-type]
+
+    def set(self, done: int, total: int) -> None:
+        """Показать долю выполненного."""
+        self.stop_pulse()
+        self.fraction = 0.0 if total <= 0 else max(0.0, min(1.0, done / total))
+        self._draw()
+
+    def start_pulse(self) -> None:
+        """Показать, что работа идёт, когда число шагов заранее неизвестно."""
+        if self._job is not None:
+            return
+        self._pulse, self._pulse_up = 0.0, True
+        self._tick()
+
+    def stop_pulse(self) -> None:
+        if self._job is not None:
+            self.canvas.after_cancel(self._job)
+            self._job = None
+
+    def clear(self) -> None:
+        """Убрать полосу: работы нет."""
+        self.stop_pulse()
+        self.fraction = 0.0
+        self._draw()
+
+    def _tick(self) -> None:
+        self._pulse += self.PULSE_STEP if self._pulse_up else -self.PULSE_STEP
+        if self._pulse >= 1.0:
+            self._pulse, self._pulse_up = 1.0, False
+        elif self._pulse <= 0.15:
+            self._pulse, self._pulse_up = 0.15, True
+        self.fraction = self._pulse
+        self._draw()
+        self._job = self.canvas.after(60, self._tick)
+
+    def _draw(self) -> None:
+        self.canvas.delete("all")
+        width = self.canvas.winfo_width()
+        if width <= 1 or self.fraction <= 0:
+            return
+        middle = width / 2
+        half = middle * self.fraction
+        self.canvas.create_rectangle(
+            middle - half,
+            0,
+            middle + half,
+            self.HEIGHT,
+            fill=COLORS["accent"],
+            width=0,
+        )
+
+
+class MergeDialog:
+    """Выбор файлов, которые надо считать страницами одного документа.
+
+    Отмечать страницы в общем списке неудобно: они перемешаны с папками и
+    другими документами. Поэтому по команде открывается отдельное окно, где
+    видно только файлы одной папки, и нужные отмечаются мышью — протяжкой,
+    с Shift или с Ctrl.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        items: list[PlanItem],
+        *,
+        preselected: list[PlanItem] | None = None,
+        suggestion: str = "",
+    ) -> None:
+        self.items = items
+        self.result: tuple[list[PlanItem], str] | None = None
+
+        self.window = tk.Toplevel(parent)
+        self.window.title("Один документ")
+        self.window.configure(bg=COLORS["bg"])
+        self.window.transient(parent if isinstance(parent, tk.Wm) else None)
+        self.window.columnconfigure(0, weight=1)
+        self.window.rowconfigure(1, weight=1)
+
+        ttk.Label(
+            self.window,
+            text=(
+                "Отметьте страницы одного документа — мышью, с Shift или Ctrl.\n"
+                "Они получат общее имя и номера страниц по порядку."
+            ),
+            style="Muted.TLabel",
+            justify="left",
+        ).grid(row=0, column=0, sticky="w", padx=PAD_L, pady=(PAD_L, PAD_S))
+
+        frame = ttk.Frame(self.window)
+        frame.grid(row=1, column=0, sticky="nsew", padx=PAD_L)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+        self.listbox = tk.Listbox(
+            frame,
+            selectmode="extended",
+            activestyle="none",
+            bg=COLORS["field"],
+            fg=COLORS["text"],
+            selectbackground=COLORS["accent"],
+            selectforeground=COLORS["accent_text"],
+            font=FONT_MONO,
+            relief="flat",
+            highlightthickness=0,
+            height=14,
+        )
+        self.listbox.grid(row=0, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=self.listbox.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.listbox.configure(yscrollcommand=scroll.set)
+        for item in items:
+            self.listbox.insert("end", item.source_path.name)
+
+        chosen = set(preselected or [])
+        for index, item in enumerate(items):
+            if item in chosen:
+                self.listbox.selection_set(index)
+        if not chosen:
+            self.listbox.selection_set(0, "end")
+
+        name_row = ttk.Frame(self.window)
+        name_row.grid(row=2, column=0, sticky="ew", padx=PAD_L, pady=(PAD_M, 0))
+        name_row.columnconfigure(1, weight=1)
+        ttk.Label(name_row, text="Общее имя:").grid(row=0, column=0, sticky="w")
+        self.name_var = tk.StringVar(value=suggestion)
+        entry = ttk.Entry(name_row, textvariable=self.name_var, font=FONT_UI)
+        entry.grid(row=0, column=1, sticky="ew", padx=(PAD_M, 0))
+
+        buttons = ttk.Frame(self.window)
+        buttons.grid(row=3, column=0, sticky="e", padx=PAD_L, pady=PAD_L)
+        ttk.Button(
+            buttons, text="Отмена", width=BUTTON_WIDTH, command=self._cancel
+        ).grid(row=0, column=0)
+        ttk.Button(
+            buttons,
+            text="Объединить",
+            width=BUTTON_WIDTH,
+            style="Accent.TButton",
+            command=self._accept,
+        ).grid(row=0, column=1, padx=(PAD_M, 0))
+
+        self.window.bind("<Escape>", lambda _event: self._cancel())
+        self.window.bind("<Return>", lambda _event: self._accept())
+        entry.focus_set()
+
+    def selected_items(self) -> list[PlanItem]:
+        """Отмеченные в окне файлы — в том порядке, в каком они показаны."""
+        return [self.items[index] for index in self.listbox.curselection()]
+
+    def _accept(self) -> None:
+        chosen = self.selected_items()
+        if len(chosen) < 2:
+            messagebox.showinfo(
+                "Один документ",
+                "Отметьте хотя бы два файла — страницы одного документа.",
+                parent=self.window,
+            )
+            return
+        name = self.name_var.get().strip()
+        if not name:
+            messagebox.showinfo(
+                "Один документ", "Задайте общее имя документа.", parent=self.window
+            )
+            return
+        self.result = (chosen, name)
+        self.window.destroy()
+
+    def _cancel(self) -> None:
+        self.result = None
+        self.window.destroy()
+
+    def show(self) -> tuple[list[PlanItem], str] | None:
+        """Показать окно и дождаться решения человека."""
+        self.window.grab_set()
+        self.window.wait_window()
+        return self.result
+
+
 class DocRenamerGUI:
     """Главное окно приложения."""
 
@@ -251,7 +464,7 @@ class DocRenamerGUI:
 
         self.root = tk.Tk()
         self.root.title(f"{APP_TITLE} {__version__}")
-        self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
+        self._apply_geometry()
         self.root.minsize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         self.root.configure(bg=COLORS["bg"])
         self._set_window_icon()
@@ -265,6 +478,20 @@ class DocRenamerGUI:
         self.root.after(300, lambda: self._selftest(probe_model=False, quiet=True))
         if self.config.update.enabled and self.config.update.check_on_start:
             self.root.after(1500, self._check_updates)
+
+    def _apply_geometry(self) -> None:
+        """Раскрыть окно по размеру экрана и поставить его посередине.
+
+        Жёсткий размер окна плох одинаково в обе стороны: на маленьком экране
+        оно уезжает за край, на большом — оставляет половину места пустой.
+        """
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        width = max(WINDOW_MIN_WIDTH, min(WINDOW_WIDTH, screen_width - 120))
+        height = max(WINDOW_MIN_HEIGHT, min(WINDOW_HEIGHT, screen_height - 140))
+        left = max(0, (screen_width - width) // 2)
+        top = max(0, (screen_height - height) // 2 - 20)
+        self.root.geometry(f"{width}x{height}+{left}+{top}")
 
     # --- построение интерфейса --------------------------------------------
 
@@ -416,9 +643,13 @@ class DocRenamerGUI:
         виден всегда, сколько бы файлов ни было в списке.
         """
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(2, weight=1)
+        self.root.rowconfigure(3, weight=1)
 
         self._build_header()
+        # Тонкая полоса хода работы идёт сразу под заголовком: она не занимает
+        # места и видна, куда бы ни смотрел человек.
+        self.progress = CenterProgress(self.root)
+        self.progress.grid(row=1, column=0, sticky="ew", padx=PAD_L)
         self._build_toolbar()
         self._build_workspace()
         self._build_status()
@@ -495,7 +726,7 @@ class DocRenamerGUI:
     def _build_workspace(self) -> None:
         """Две колонки: список файлов и журнал."""
         workspace = ttk.PanedWindow(self.root, orient="horizontal")
-        workspace.grid(row=2, column=0, sticky="nsew", padx=PAD_L)
+        workspace.grid(row=3, column=0, sticky="nsew", padx=PAD_L)
 
         left = ttk.Frame(workspace, width=LEFT_MIN_WIDTH)
         left.columnconfigure(0, weight=1)
@@ -527,7 +758,7 @@ class DocRenamerGUI:
 
         self.tree = ttk.Treeview(
             table,
-            columns=("mark", "proposed", "confidence", "status", "meta"),
+            columns=("mark", "proposed", "confidence", "status"),
             show="tree headings",
             # Несколько строк выбираются мышью с Ctrl или Shift: так
             # отмечаются страницы, которые надо объединить в один документ.
@@ -536,18 +767,18 @@ class DocRenamerGUI:
         # Колонка дерева показывает вложенность: сначала файлы корня, затем
         # папка и её содержимое под ней — структуру видно без догадок.
         self.tree.heading("#0", text="Файл или папка")
-        self.tree.column("#0", width=260, minwidth=140, stretch=False, anchor="w")
-        columns: tuple[tuple[str, str, int, bool, bool], ...] = (
-            ("mark", "✓", 40, True, False),
-            ("proposed", "Предлагаемое имя", 420, False, True),
-            ("confidence", "Уверенность", 110, True, False),
-            ("status", "Состояние", 150, False, False),
-            ("meta", "Метаданные", 170, False, False),
+        self.tree.column("#0", width=230, minwidth=140, stretch=False, anchor="w")
+        # Ширины подобраны под заголовки: предлагаемое имя тянется, остальные
+        # колонки занимают ровно столько, сколько нужно их содержимому.
+        columns: tuple[tuple[str, str, int, int, bool, bool], ...] = (
+            ("mark", "✓", 34, 34, True, False),
+            ("proposed", "Предлагаемое имя", 340, 200, False, True),
+            ("confidence", "Уверенность", 92, 80, True, False),
+            ("status", "Состояние", 130, 100, False, False),
         )
-        for column, title, width, centered, stretch in columns:
+        for column, title, width, minwidth, centered, stretch in columns:
             self.tree.heading(column, text=title)
-            self.tree.column(column, width=width, minwidth=36 if column == "mark" else 90,
-                             stretch=stretch)
+            self.tree.column(column, width=width, minwidth=minwidth, stretch=stretch)
             self.tree.column(column, anchor="center" if centered else "w")
         self.tree.tag_configure("ok", foreground=COLORS["ok"])
         self.tree.tag_configure("warn", foreground=COLORS["warn"])
@@ -586,9 +817,9 @@ class DocRenamerGUI:
         right.columnconfigure(0, weight=1)
         # Правая колонка читается сверху вниз: как файл выглядит, что о нём
         # известно, и лишь затем ход работы.
-        right.rowconfigure(1, weight=4)
-        right.rowconfigure(3, weight=3)
-        right.rowconfigure(5, weight=2)
+        right.rowconfigure(1, weight=4, minsize=PREVIEW_MIN_HEIGHT)
+        right.rowconfigure(3, weight=3, minsize=DETAILS_MIN_HEIGHT)
+        right.rowconfigure(5, weight=2, minsize=LOG_MIN_HEIGHT)
         workspace.add(right, weight=2)
 
         ttk.Label(right, text="ПРЕДПРОСМОТР ФАЙЛА", style="Section.TLabel").grid(
@@ -676,21 +907,19 @@ class DocRenamerGUI:
         self.log.configure(yscrollcommand=log_scroll.set)
 
     def _build_status(self) -> None:
-        status = ttk.Frame(self.root, padding=(PAD_L, PAD_M, PAD_L, PAD_S))
-        status.grid(row=3, column=0, sticky="ew")
+        status = ttk.Frame(self.root, padding=(PAD_L, PAD_S, PAD_L, 0))
+        status.grid(row=4, column=0, sticky="ew")
         status.columnconfigure(0, weight=1)
 
-        self.progress = ttk.Progressbar(status, mode="determinate")
-        self.progress.grid(row=0, column=0, sticky="ew")
         self.status_var = tk.StringVar(value="Готово")
         ttk.Label(status, textvariable=self.status_var, style="Muted.TLabel").grid(
-            row=0, column=1, sticky="e", padx=(PAD_M, 0)
+            row=0, column=0, sticky="e"
         )
 
     def _build_actions(self) -> None:
         """Ряд кнопок: слева действия над файлами, справа служебные."""
         actions = ttk.Frame(self.root, padding=(PAD_L, PAD_S, PAD_L, PAD_L))
-        actions.grid(row=4, column=0, sticky="ew")
+        actions.grid(row=5, column=0, sticky="ew")
         actions.columnconfigure(4, weight=1)
 
         self.scan_button = ttk.Button(
@@ -746,6 +975,13 @@ class DocRenamerGUI:
         self.details.insert("1.0", text)
         self.details.configure(state="disabled")
 
+    def _preview_size(self) -> tuple[int, int]:
+        """Размер картинки под текущую ширину панели предпросмотра."""
+        frame = self.preview_image.master
+        width = frame.winfo_width() or RIGHT_MIN_WIDTH
+        height = frame.winfo_height() or PREVIEW_MIN_HEIGHT
+        return (max(220, width - 2 * PAD_M), max(160, height - 2 * PAD_M))
+
     def _set_preview_text(self, text: str) -> None:
         """Показать текстовый предпросмотр вместо картинки."""
         self.preview_image.grid_remove()
@@ -763,7 +999,7 @@ class DocRenamerGUI:
         началом прочитанного текста: именно по нему строилось имя, поэтому по
         нему же видно, справедливо ли оно.
         """
-        data = None if item.is_folder else thumbnail_png(item.source_path)
+        data = None if item.is_folder else thumbnail_png(item.source_path, self._preview_size())
         if data is None:
             self._set_preview_text(text_preview(item))
             return
@@ -814,7 +1050,7 @@ class DocRenamerGUI:
                     self._log(str(payload))
                 elif kind == "progress":
                     done, total, stage = payload
-                    self.progress.configure(maximum=max(1, total), value=done)
+                    self.progress.set(done, total)
                     self.status_var.set(progress_label(done, total, stage))
                 elif kind == "files":
                     self._show_files(payload)
@@ -838,6 +1074,10 @@ class DocRenamerGUI:
         self.root.after(80, self._drain_events)
 
     def _busy(self, busy: bool) -> None:
+        if busy:
+            self.progress.start_pulse()
+        else:
+            self.progress.clear()
         state = "disabled" if busy else "normal"
         for button in (
             self.scan_button,
@@ -1222,7 +1462,6 @@ class DocRenamerGUI:
                     "—",
                     f"{size:.0f} КБ" if size < 1024 else f"{size / 1024:.1f} МБ",
                     "Найден",
-                    format_stamp(scanned.mtime),
                 ),
                 tags=("warn",),
             )
@@ -1323,7 +1562,7 @@ class DocRenamerGUI:
                 "end",
                 iid=node,
                 text=f"📁 {directory.name}",
-                values=("", "—", "", "папка", ""),
+                values=("", "—", "", "папка"),
                 tags=("warn",),
                 open=True,
             )
@@ -1387,36 +1626,43 @@ class DocRenamerGUI:
         return "break"
 
     def _merge_selected(self) -> None:
-        """Объединить выбранные файлы в один документ по решению человека.
+        """Объединить файлы в один документ по решению человека.
 
         Программа не всегда может понять, что перед ней страницы: сканы без
         распознавания ничем не отличаются от отдельных снимков. Тогда решает
-        человек, и его решение важнее любой догадки.
+        человек — и выбирает страницы прямо в открывшемся окне.
         """
-        from tkinter import simpledialog
-
         if self.plan is None:
             messagebox.showinfo("Один документ", "Сначала нажмите «Предпросмотр».")
             return
-        items = self._selected_plan_items()
-        pages = [item for item in items if not item.is_folder]
-        if len(pages) < 2:
+
+        preselected = [item for item in self._selected_plan_items() if not item.is_folder]
+        folder = self._merge_folder(preselected)
+        if folder is None:
+            return
+        candidates = [
+            item
+            for item in self.plan.items
+            if not item.is_folder and item.source_path.parent == folder
+        ]
+        if len(candidates) < 2:
             messagebox.showinfo(
                 "Один документ",
-                "Отметьте страницы одного документа: несколько файлов мышью\n"
-                "с Ctrl или Shift — либо папку, в которой они лежат.",
+                "В этой папке нечего объединять: нужно хотя бы два файла.",
             )
             return
-        suggestion = self._merge_suggestion(pages)
-        answer = simpledialog.askstring(
-            "Один документ",
-            f"Страниц выбрано: {len(pages)}.\n\nОбщее имя документа:",
-            initialvalue=suggestion,
-            parent=self.root,
+
+        dialog = MergeDialog(
+            self.root,
+            candidates,
+            preselected=preselected,
+            suggestion=self._merge_suggestion(preselected or candidates),
         )
+        answer = dialog.show()
         if answer is None:
             return
-        accepted, message = merge_as_document(self.plan, pages, answer)
+        pages, name = answer
+        accepted, message = merge_as_document(self.plan, pages, name)
         if not accepted:
             messagebox.showwarning("Один документ", message)
             return
@@ -1425,6 +1671,36 @@ class DocRenamerGUI:
         self._log(message)
         for item in pages:
             self.learning.record_plan_item(item, event="merged")
+
+    def _merge_folder(self, preselected: list[PlanItem]) -> Path | None:
+        """Папка, страницы которой предлагается объединить.
+
+        Берётся папка выбранной строки; если ничего не выбрано — единственная
+        папка с файлами. Когда папок несколько, человек должен показать, какая
+        имеется в виду: страницы одного документа лежат вместе.
+        """
+        if self.plan is None:
+            return None
+        if preselected:
+            folders = {item.source_path.parent for item in preselected}
+            if len(folders) > 1:
+                messagebox.showinfo(
+                    "Один документ",
+                    "Страницы одного документа должны лежать в одной папке.",
+                )
+                return None
+            return folders.pop()
+        folders = {
+            item.source_path.parent for item in self.plan.items if not item.is_folder
+        }
+        if len(folders) == 1:
+            return folders.pop()
+        messagebox.showinfo(
+            "Один документ",
+            "Выберите в списке любой файл из той папки, страницы которой\n"
+            "нужно объединить, и повторите.",
+        )
+        return None
 
     def _show_row_menu(self, event: tk.Event) -> str | None:
         """Показать меню для строки под указателем."""

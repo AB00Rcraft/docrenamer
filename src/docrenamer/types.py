@@ -67,6 +67,7 @@ class Status(StrEnum):
     NAME_REVIEW_FAILED = "NAME_REVIEW_FAILED"
     SERIES_PART_DETECTED = "SERIES_PART_DETECTED"
     MANUAL_NAME = "MANUAL_NAME"
+    TECHNICAL_FILE = "TECHNICAL_FILE"
     AI_DISABLED = "AI_DISABLED"
     AI_NOT_NEEDED = "AI_NOT_NEEDED"
     LIMIT_EXCEEDED = "LIMIT_EXCEEDED"
@@ -130,6 +131,10 @@ STATUS_DESCRIPTIONS_RU: dict[str, str] = {
         "Файл распознан как часть многотомного документа; номер части сохранён."
     ),
     Status.MANUAL_NAME: "Имя задано вручную — предложение программы заменено.",
+    Status.TECHNICAL_FILE: (
+        "Служебный файл: его имя — часть работы системы или программы. "
+        "Программа его не переименовывает."
+    ),
     Status.AI_DISABLED: "Локальный ИИ отключён в настройках.",
     Status.AI_NOT_NEEDED: "Локальный ИИ не понадобился.",
     Status.LIMIT_EXCEEDED: "Превышен лимит обработки, данные усечены.",
