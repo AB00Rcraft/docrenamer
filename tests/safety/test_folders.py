@@ -266,3 +266,79 @@ def test_neutral_labels_do_not_name_a_folder(
 
     assert not folder_item.selected
     assert "Документ" not in folder_item.proposed_filename or not folder_item.is_rename
+
+
+def test_folder_with_one_document_gets_name(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """Папка с одним документом тоже получает имя.
+
+    Раньше участник признавался общим только начиная с двух упоминаний, и
+    папка из одного иска оставалась без предложения — а понятнее случая не
+    бывает.
+    """
+    folder = workdir / "новая папка (3)"
+    folder.mkdir()
+    (folder / "иск.txt").write_bytes(
+        (
+            "ИСКОВОЕ ЗАЯВЛЕНИЕ\nо взыскании задолженности\n"
+            "Истец: Шахманова Мария Петровна\nДело № 2-1183/2026\n"
+            "12 мая 2026 года заключён договор займа.\n"
+        ).encode()
+    )
+
+    app = Application(config, paths=app_paths)
+    plan = app.preview(workdir)
+    folder_item = next(item for item in plan.items if item.is_folder)
+
+    assert folder_item.is_rename, folder_item.message
+    assert folder_item.selected, folder_item.message
+    assert folder_item.proposed_filename.startswith("Иск"), folder_item.proposed_filename
+
+
+def test_folder_without_own_files_is_named_by_contents(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """Папку, в которой лежит только другая папка, называет её содержимое.
+
+    Но одно и то же имя на двух уровнях подряд не ставится: оно остаётся у
+    той папки, что ближе к документам.
+    """
+    outer = workdir / "новая папка (4)"
+    inner = outer / "внутри"
+    inner.mkdir(parents=True)
+    (inner / "иск.txt").write_bytes(
+        (
+            "ИСКОВОЕ ЗАЯВЛЕНИЕ\nИстец: Шахманова Мария Петровна\n"
+            "Дело № 2-1183/2026\n12 мая 2026 года заключён договор займа.\n"
+        ).encode()
+    )
+
+    app = Application(config, paths=app_paths)
+    plan = app.preview(workdir, recursive=True)
+    named = {
+        item.source_path.name: item.proposed_filename
+        for item in plan.items
+        if item.is_folder and item.is_rename
+    }
+
+    assert "внутри" in named, named
+    assert named["внутри"].startswith("Иск"), named
+    assert "новая папка (4)" not in named, named
+
+
+def test_folder_without_common_facts_keeps_silence(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """Число файлов и дата — не название: такую папку программа не трогает."""
+    folder = workdir / "разное 3"
+    folder.mkdir()
+    (folder / "заметка.txt").write_bytes("Просто текст".encode())
+    (folder / "данные.json").write_bytes(b'{"a": 1}')
+
+    app = Application(config, paths=app_paths)
+    plan = app.preview(workdir)
+    folder_item = next(item for item in plan.items if item.is_folder)
+
+    assert not folder_item.is_rename
+    assert "файлов" not in folder_item.proposed_filename

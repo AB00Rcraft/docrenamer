@@ -296,6 +296,12 @@ class Pipeline:
             for child in children
             if child.source_path.parent == folder
         ]
+        if not inside:
+            # Своих файлов нет, но папка не пуста: смысл ей дают документы во
+            # вложенных папках. Иначе «Дело» с единственной папкой внутри
+            # осталось бы безымянным.
+            inside = [child for child in children if folder in child.source_path.parents]
+            analysis.metadata["named_from_inner"] = True
         analysis.metadata["files_inside"] = len(inside)
         if not inside:
             analysis.add_status(Status.EMPTY_DOCUMENT)
@@ -327,6 +333,7 @@ class Pipeline:
         # у папки с паспортом, иском и снимками одного человека общее название
         # есть — «Документы» этого человека.
         if types and share >= 0.6:
+            analysis.metadata["type_share"] = round(share, 3)
             analysis.document_type = Field(
                 value=label,
                 source=Source.METADATA,
@@ -344,7 +351,11 @@ class Pipeline:
             if not counter:
                 continue
             name, count = counter.most_common(1)[0]
-            if count < max(2, len(inside) // 3):
+            # В папке из одного-двух документов участник виден и по одному
+            # упоминанию. Начиная с трёх файлов нужно повторение: иначе
+            # случайная фамилия из одного документа назовёт всю папку.
+            needed = 1 if len(inside) <= 2 else max(2, len(inside) // 3)
+            if count < needed:
                 continue
             setattr(
                 analysis,
@@ -396,6 +407,19 @@ class Pipeline:
         period = _folder_period(inside)
         if period:
             analysis.metadata["period"] = _period_for_name(period, self.config)
+
+        informative = bool(
+            (analysis.document_type is not None and analysis.document_type.accepted)
+            or analysis.main_persons
+            or analysis.main_organizations
+            or analysis.case_numbers
+        )
+        if not informative:
+            # «2_файлов_19.08.2026» — не название, а отписка: о содержимом
+            # папки оно не сообщает ничего (раздел 92 ТЗ).
+            analysis.add_status(Status.NO_NAME_PROPOSED)
+            self._collect_evidence(analysis)
+            return analysis
 
         analysis.overall_confidence = _folder_confidence(analysis, len(inside))
         name, _dropped = build_filename(analysis, self.config)
@@ -1452,7 +1476,10 @@ def _folder_confidence(analysis: FileAnalysis, files_inside: int) -> float:
     """
     score = 0.35
     if analysis.document_type is not None and analysis.document_type.accepted:
-        score += 0.3 if not analysis.metadata.get("mixed_folder") else 0.1
+        # Преобладающий вид документов — самый весомый довод; «Документы» у
+        # разнородной папки значат меньше.
+        share = float(analysis.metadata.get("type_share") or 1.0)
+        score += (0.1 if analysis.metadata.get("mixed_folder") else 0.25 + 0.1 * share)
     if analysis.main_persons:
         score += 0.3 * analysis.main_persons[0].confidence
     elif analysis.main_organizations:

@@ -221,6 +221,7 @@ class Application:
                     self.last_folders, key=lambda p: len(p.parts), reverse=True
                 )
             ]
+            folder_analyses = _drop_duplicate_folder_names(folder_analyses)
             plan.items.extend(build_folder_items(folder_analyses, config=self.config))
         if save_plan_to:
             plan.save(Path(save_plan_to))
@@ -545,3 +546,32 @@ class Application:
             log_encoding=self.config.human_log_encoding,
             on_line=self.on_line,
         )
+
+
+def _drop_duplicate_folder_names(folders: list[FileAnalysis]) -> list[FileAnalysis]:
+    """Не повторять одно имя на двух уровнях подряд.
+
+    Папка без своих файлов называется по тому, что лежит глубже. Если внутри
+    ровно та же папка с тем же содержимым, оба уровня получили бы одинаковое
+    имя — путь вида ``Иск_Шахмановой\\Иск_Шахмановой`` человеку не нужен.
+    Имя остаётся у той папки, что ближе к документам.
+    """
+    names = {
+        analysis.source_path: analysis.proposed_filename
+        for analysis in folders
+        if analysis.proposed_filename
+    }
+    result: list[FileAnalysis] = []
+    for analysis in folders:
+        proposed = analysis.proposed_filename
+        if proposed and analysis.metadata.get("named_from_inner"):
+            inner = [
+                name
+                for path, name in names.items()
+                if path != analysis.source_path and analysis.source_path in path.parents
+            ]
+            if proposed in inner:
+                analysis.proposed_filename = ""
+                analysis.add_status(Status.NAME_UNCHANGED)
+        result.append(analysis)
+    return result
