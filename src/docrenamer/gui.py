@@ -136,9 +136,10 @@ TOOLTIPS: dict[str, str] = {
                "которое читает документы, в сеть не выходит.",
     "edit_name": "Изменить предложенное имя вручную.\n"
                  "То же самое делает двойной щелчок по имени и клавиша F2.",
-    "merge": "Считать выбранные файлы страницами одного документа.\n"
-             "Отметьте их мышью с Ctrl или Shift — или выберите папку целиком.\n"
-             "Программа даст им общее имя с номерами страниц.",
+    "merge": "Считать несколько файлов страницами одного документа.\n"
+             "Откроется окно, где страницы отмечаются мышью — протяжкой,\n"
+             "с Shift или Ctrl, — и задаётся общее имя. Страницы получат\n"
+             "номера по порядку прежней нумерации.",
     "more": "Служебное: самопроверка, журнал работы, отчёт об именах,\n"
             "настройки и проверка обновлений.",
     "scrub": "Снять с выбранных файлов метаданные: EXIF и GPS у снимков,\n"
@@ -317,8 +318,9 @@ class MergeDialog:
 
     Отмечать страницы в общем списке неудобно: они перемешаны с папками и
     другими документами. Поэтому по команде открывается отдельное окно, где
-    видно только файлы одной папки, и нужные отмечаются мышью — протяжкой,
-    с Shift или с Ctrl.
+    видны только файлы, и нужные отмечаются мышью — протяжкой, с Shift или с
+    Ctrl. Если файлы лежат в разных папках, у каждого написано, где он: одним
+    документом могут быть только страницы из одной папки.
     """
 
     def __init__(
@@ -328,8 +330,10 @@ class MergeDialog:
         *,
         preselected: list[PlanItem] | None = None,
         suggestion: str = "",
+        root: Path | None = None,
     ) -> None:
         self.items = items
+        self.root_directory = root
         self.result: tuple[list[PlanItem], str] | None = None
 
         self.window = tk.Toplevel(parent)
@@ -370,8 +374,9 @@ class MergeDialog:
         scroll = ttk.Scrollbar(frame, orient="vertical", command=self.listbox.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         self.listbox.configure(yscrollcommand=scroll.set)
+        folders = {item.source_path.parent for item in items}
         for item in items:
-            self.listbox.insert("end", item.source_path.name)
+            self.listbox.insert("end", self._label(item, show_folder=len(folders) > 1))
 
         chosen = set(preselected or [])
         for index, item in enumerate(items):
@@ -405,6 +410,20 @@ class MergeDialog:
         self.window.bind("<Return>", lambda _event: self._accept())
         entry.focus_set()
 
+    def _label(self, item: PlanItem, *, show_folder: bool) -> str:
+        """Подпись файла в списке: с папкой, когда папок несколько."""
+        if not show_folder:
+            return item.source_path.name
+        directory = item.source_path.parent
+        if self.root_directory is not None:
+            try:
+                directory = directory.relative_to(self.root_directory)
+            except ValueError:
+                pass
+        return f"{directory}\\{item.source_path.name}" if str(directory) != "." else (
+            item.source_path.name
+        )
+
     def selected_items(self) -> list[PlanItem]:
         """Отмеченные в окне файлы — в том порядке, в каком они показаны."""
         return [self.items[index] for index in self.listbox.curselection()]
@@ -415,6 +434,14 @@ class MergeDialog:
             messagebox.showinfo(
                 "Один документ",
                 "Отметьте хотя бы два файла — страницы одного документа.",
+                parent=self.window,
+            )
+            return
+        if len({item.source_path.parent for item in chosen}) > 1:
+            messagebox.showinfo(
+                "Один документ",
+                "Страницы одного документа должны лежать в одной папке.\n"
+                "Оставьте отмеченными файлы только из одной папки.",
                 parent=self.window,
             )
             return
@@ -920,7 +947,7 @@ class DocRenamerGUI:
         """Ряд кнопок: слева действия над файлами, справа служебные."""
         actions = ttk.Frame(self.root, padding=(PAD_L, PAD_S, PAD_L, PAD_L))
         actions.grid(row=5, column=0, sticky="ew")
-        actions.columnconfigure(4, weight=1)
+        actions.columnconfigure(6, weight=1)
 
         self.scan_button = ttk.Button(
             actions, text="Сканировать", width=BUTTON_WIDTH, command=self._scan
@@ -952,8 +979,15 @@ class DocRenamerGUI:
         self.stop_button.grid(row=0, column=4, sticky="w", padx=(PAD_M, 0))
         Tooltip(self.stop_button, TOOLTIPS["stop"])
 
-        # Всё, что относится к отдельным файлам, живёт в меню строки, а
-        # служебное — под одной кнопкой: в ряду остаётся только ход работы.
+        # Объединение страниц — частая работа, а не редкая настройка: у него
+        # своя кнопка в ряду, хотя оно есть и в меню строки.
+        self.merge_button = ttk.Button(
+            actions, text="Объединить", width=BUTTON_WIDTH, command=self._merge_selected
+        )
+        self.merge_button.grid(row=0, column=5, sticky="w", padx=(PAD_M, 0))
+        Tooltip(self.merge_button, TOOLTIPS["merge"])
+
+        # Служебное — под одной кнопкой: в ряду остаётся только ход работы.
         more = ttk.Menubutton(actions, text="Ещё", width=BUTTON_WIDTH)
         menu = tk.Menu(more, tearoff=0)
         menu.add_command(label="Самопроверка", command=self._selftest)
@@ -964,7 +998,7 @@ class DocRenamerGUI:
         if self.config.update.enabled:
             menu.add_command(label="Проверить обновления", command=self._check_updates)
         more.configure(menu=menu)
-        more.grid(row=0, column=5, sticky="e", padx=(PAD_M, 0))
+        more.grid(row=0, column=7, sticky="e", padx=(PAD_M, 0))
         Tooltip(more, TOOLTIPS["more"])
         self.more_menu = menu
 
@@ -1084,6 +1118,7 @@ class DocRenamerGUI:
             self.preview_button,
             self.apply_button,
             self.undo_button,
+            self.merge_button,
         ):
             button.configure(state=state)
         self.stop_button.configure(state="normal" if busy else "disabled")
@@ -1637,18 +1672,17 @@ class DocRenamerGUI:
             return
 
         preselected = [item for item in self._selected_plan_items() if not item.is_folder]
-        folder = self._merge_folder(preselected)
-        if folder is None:
-            return
+        folders = {item.source_path.parent for item in preselected}
         candidates = [
             item
             for item in self.plan.items
-            if not item.is_folder and item.source_path.parent == folder
+            if not item.is_folder
+            and (not folders or item.source_path.parent in folders)
         ]
         if len(candidates) < 2:
             messagebox.showinfo(
                 "Один документ",
-                "В этой папке нечего объединять: нужно хотя бы два файла.",
+                "Объединять нечего: нужно хотя бы два файла в одной папке.",
             )
             return
 
@@ -1657,6 +1691,7 @@ class DocRenamerGUI:
             candidates,
             preselected=preselected,
             suggestion=self._merge_suggestion(preselected or candidates),
+            root=self.plan.root,
         )
         answer = dialog.show()
         if answer is None:
@@ -1671,36 +1706,6 @@ class DocRenamerGUI:
         self._log(message)
         for item in pages:
             self.learning.record_plan_item(item, event="merged")
-
-    def _merge_folder(self, preselected: list[PlanItem]) -> Path | None:
-        """Папка, страницы которой предлагается объединить.
-
-        Берётся папка выбранной строки; если ничего не выбрано — единственная
-        папка с файлами. Когда папок несколько, человек должен показать, какая
-        имеется в виду: страницы одного документа лежат вместе.
-        """
-        if self.plan is None:
-            return None
-        if preselected:
-            folders = {item.source_path.parent for item in preselected}
-            if len(folders) > 1:
-                messagebox.showinfo(
-                    "Один документ",
-                    "Страницы одного документа должны лежать в одной папке.",
-                )
-                return None
-            return folders.pop()
-        folders = {
-            item.source_path.parent for item in self.plan.items if not item.is_folder
-        }
-        if len(folders) == 1:
-            return folders.pop()
-        messagebox.showinfo(
-            "Один документ",
-            "Выберите в списке любой файл из той папки, страницы которой\n"
-            "нужно объединить, и повторите.",
-        )
-        return None
 
     def _show_row_menu(self, event: tk.Event) -> str | None:
         """Показать меню для строки под указателем."""

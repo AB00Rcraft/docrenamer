@@ -227,3 +227,28 @@ def test_progress_draws_from_the_middle(gui) -> None:  # type: ignore[no-untyped
 
     gui.progress.clear()
     assert not gui.progress.canvas.find_all()
+
+
+def test_merge_button_is_on_the_panel(gui) -> None:  # type: ignore[no-untyped-def]
+    """Объединение — частая работа, и кнопка у него своя."""
+    assert gui.merge_button.winfo_exists()
+    assert gui.merge_button.cget("text") == "Объединить"
+
+
+def test_merge_dialog_labels_folders(gui, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    """Когда файлы из разных папок, у каждого написано, где он лежит."""
+    from docrenamer.gui import MergeDialog
+
+    inner = workdir / "Дело"
+    inner.mkdir()
+    items = []
+    for path in (workdir / "1.jpg", inner / "2.jpg"):
+        path.write_bytes(b"\xff\xd8\xff\xe0")
+        items.append(make_item(path, path.name))
+
+    dialog = MergeDialog(gui.root, items, root=workdir)
+    try:
+        labels = [dialog.listbox.get(index) for index in range(dialog.listbox.size())]
+        assert labels == ["1.jpg", "Дело\\2.jpg"], labels
+    finally:
+        dialog.window.destroy()
