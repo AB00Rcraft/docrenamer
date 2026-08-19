@@ -100,3 +100,35 @@ def test_scan_results_show_file_names(gui, workdir: Path) -> None:  # type: igno
     assert gui.tree.item(rows[0], "text") == "договор.docx"
     values = gui.tree.item(rows[0], "values")
     assert len(values) == len(gui.tree["columns"]), values
+
+
+def test_preview_pane_shows_file(gui, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    """При выборе строки справа показывается содержимое файла."""
+    from tests.fixtures import builders
+
+    path = builders.make_jpeg_with_exif(workdir / "IMG_5608.jpg")
+    item = make_item(path, "Паспорт_ИвановИИ_фото.jpg")
+    gui._show_plan(RenamePlan(root=workdir, items=[item]))
+
+    gui._show_preview(item)
+
+    # Снимок показан картинкой, а не текстом.
+    assert gui.preview_photo is not None
+    assert not gui.preview_text.winfo_ismapped() or gui.preview_image.winfo_ismapped()
+
+
+def test_preview_falls_back_to_text(gui, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    """Для документа показывается начало текста."""
+    from docrenamer.types import FileAnalysis, ReadResult
+
+    path = workdir / "иск.txt"
+    path.write_text("ИСКОВОЕ ЗАЯВЛЕНИЕ о взыскании долга", encoding="utf-8")
+    item = make_item(path, "Иск_18.08.2026.txt")
+    analysis = FileAnalysis(source_path=path)
+    analysis.read_result = ReadResult(text="ИСКОВОЕ ЗАЯВЛЕНИЕ о взыскании долга")
+    item.analysis = analysis
+    gui._show_plan(RenamePlan(root=workdir, items=[item]))
+
+    gui._show_preview(item)
+
+    assert "ИСКОВОЕ" in gui.preview_text.get("1.0", "end")

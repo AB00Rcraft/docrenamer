@@ -23,13 +23,25 @@ from docrenamer.app import Application, Cancelled
 from docrenamer.config import Config, load_config
 from docrenamer.learning import LearningLog
 from docrenamer.logging.manifest import find_incomplete_sessions
-from docrenamer.operations.planner import RenamePlan, build_plan, set_manual_name
+from docrenamer.operations.planner import (
+    RenamePlan,
+    build_plan,
+    merge_as_document,
+    set_manual_name,
+)
 from docrenamer.paths import AppPaths, default_paths
 from docrenamer.presentation import (
     plan_row_label,
     plan_row_values,
     progress_label,
     row_tag,
+)
+from docrenamer.preview import (
+    folder_preview,
+    format_stamp,
+    metadata_summary,
+    text_preview,
+    thumbnail_png,
 )
 from docrenamer.security.subprocess_safe import hidden_process_options
 from docrenamer.types import PlanItem
@@ -71,7 +83,7 @@ FONT_MONO = (FONT_MONO_FAMILY, 10)
 #: Размеры элементов. Все кнопки одной ширины — ряд выглядит выверенным.
 BUTTON_WIDTH = 15
 ROW_HEIGHT = 26
-DETAILS_HEIGHT = 4
+DETAILS_HEIGHT = 3
 PROGRESS_HEIGHT = 6
 LEFT_MIN_WIDTH = 620
 RIGHT_MIN_WIDTH = 360
@@ -116,9 +128,15 @@ TOOLTIPS: dict[str, str] = {
                "которое читает документы, в сеть не выходит.",
     "edit_name": "Изменить предложенное имя вручную.\n"
                  "То же самое делает двойной щелчок по имени и клавиша F2.",
+    "merge": "Считать выбранные файлы страницами одного документа.\n"
+             "Отметьте их мышью с Ctrl или Shift — или выберите папку целиком.\n"
+             "Программа даст им общее имя с номерами страниц.",
     "feedback": "Показать обезличенный отчёт о работе алгоритма имён\n"
                 "и, если согласитесь, открыть страницу его отправки.\n"
                 "Имён файлов, фамилий и текста документов в отчёте нет.",
+    "preview_pane": "Содержимое выбранного файла: снимок и первая страница PDF —\n"
+                    "картинкой, документ — началом распознанного текста.\n"
+                    "По нему сразу видно, отвечает ли имя содержимому.",
     "readiness": "Готовность комплекта. Нажмите «Самопроверка» для подробностей.",
     "mode": "Анализ — только разобрать файлы.\n"
             "Предпросмотр — показать предлагаемые имена.\n"
@@ -130,7 +148,9 @@ TOOLTIPS: dict[str, str] = {
              "Двойной щелчок по имени — правка вручную, пробел — отметка.",
     "select_all": "Отметить все файлы, для которых есть предложение.\n"
                   "Повторное нажатие снимает отметки.",
-    "details": "Полные имена выбранного файла и причина решения.",
+    "details": "Полные имена выбранного файла, причина решения и метаданные:\n"
+               "размер, время изменения, контрольная сумма. При переименовании\n"
+               "они не меняются — программа сверяет их до и после.",
     "log": "Ход работы: что найдено, что предложено, что переименовано.",
     # Настройки
     "set_recursive": "Обрабатывать вложенные папки.",
@@ -281,6 +301,9 @@ class DocRenamerGUI:
         style.configure(".", background=COLORS["bg"], foreground=COLORS["text"])
         style.configure("TFrame", background=COLORS["bg"])
         style.configure("Card.TFrame", background=COLORS["panel"])
+        style.configure(
+            "Preview.TLabel", background=COLORS["panel"], foreground=COLORS["muted"]
+        )
         style.configure("TLabel", background=COLORS["bg"], foreground=COLORS["text"], font=FONT_UI)
         style.configure(
             "Title.TLabel", background=COLORS["bg"], foreground=COLORS["text"], font=FONT_TITLE
@@ -491,9 +514,11 @@ class DocRenamerGUI:
 
         self.tree = ttk.Treeview(
             table,
-            columns=("mark", "proposed", "confidence", "status"),
+            columns=("mark", "proposed", "confidence", "status", "meta"),
             show="tree headings",
-            selectmode="browse",
+            # Несколько строк выбираются мышью с Ctrl или Shift: так
+            # отмечаются страницы, которые надо объединить в один документ.
+            selectmode="extended",
         )
         # Колонка дерева показывает вложенность: сначала файлы корня, затем
         # папка и её содержимое под ней — структуру видно без догадок.
@@ -503,7 +528,8 @@ class DocRenamerGUI:
             ("mark", "✓", 40, True, False),
             ("proposed", "Предлагаемое имя", 420, False, True),
             ("confidence", "Уверенность", 110, True, False),
-            ("status", "Состояние", 170, False, False),
+            ("status", "Состояние", 150, False, False),
+            ("meta", "Метаданные", 170, False, False),
         )
         for column, title, width, centered, stretch in columns:
             self.tree.heading(column, text=title)
@@ -551,14 +577,47 @@ class DocRenamerGUI:
 
         right = ttk.Frame(workspace, width=RIGHT_MIN_WIDTH)
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(1, weight=1)
+        # Предпросмотр занимает верх правой колонки, журнал — низ: содержимое
+        # файла важнее хода работы, по нему и видно, верно ли имя.
+        right.rowconfigure(1, weight=3)
+        right.rowconfigure(3, weight=2)
         workspace.add(right, weight=2)
 
-        ttk.Label(right, text="ЖУРНАЛ РАБОТЫ", style="Section.TLabel").grid(
+        ttk.Label(right, text="ПРЕДПРОСМОТР ФАЙЛА", style="Section.TLabel").grid(
             row=0, column=0, sticky="w", pady=(0, PAD_S)
         )
+        preview = ttk.Frame(right, style="Card.TFrame", padding=PAD_S)
+        preview.grid(row=1, column=0, sticky="nsew")
+        preview.columnconfigure(0, weight=1)
+        preview.rowconfigure(0, weight=1)
+
+        self.preview_image = ttk.Label(preview, anchor="center", style="Preview.TLabel")
+        self.preview_image.grid(row=0, column=0, sticky="nsew")
+        self.preview_image.grid_remove()
+        self.preview_photo: tk.PhotoImage | None = None
+
+        self.preview_text = tk.Text(
+            preview,
+            wrap="word",
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            font=FONT_MONO,
+            relief="flat",
+            highlightthickness=0,
+            padx=PAD_S,
+            pady=PAD_S,
+            state="disabled",
+        )
+        self.preview_text.grid(row=0, column=0, sticky="nsew")
+        Tooltip(self.preview_image, TOOLTIPS["preview_pane"])
+        Tooltip(self.preview_text, TOOLTIPS["preview_pane"])
+        self._set_preview_text("Выберите файл в списке — здесь будет его содержимое.")
+
+        ttk.Label(right, text="ЖУРНАЛ РАБОТЫ", style="Section.TLabel").grid(
+            row=2, column=0, sticky="w", pady=(PAD_M, PAD_S)
+        )
         log_frame = ttk.Frame(right)
-        log_frame.grid(row=1, column=0, sticky="nsew")
+        log_frame.grid(row=3, column=0, sticky="nsew")
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
@@ -631,10 +690,11 @@ class DocRenamerGUI:
 
         service = (
             ("Изменить имя", self._edit_selected_name, "edit_name", 5),
-            ("Самопроверка", self._selftest, "selftest", 6),
-            ("Журнал", self._open_logs, "logs", 7),
-            ("Улучшение", self._send_feedback, "feedback", 8),
-            ("Настройки", self._open_settings, "settings", 9),
+            ("Один документ", self._merge_selected, "merge", 6),
+            ("Самопроверка", self._selftest, "selftest", 7),
+            ("Журнал", self._open_logs, "logs", 8),
+            ("Улучшение", self._send_feedback, "feedback", 9),
+            ("Настройки", self._open_settings, "settings", 10),
         )
         for text, command, key, column in service:
             button = ttk.Button(actions, text=text, width=BUTTON_WIDTH, command=command)
@@ -644,7 +704,7 @@ class DocRenamerGUI:
             updates = ttk.Button(
                 actions, text="Обновления", width=BUTTON_WIDTH, command=self._check_updates
             )
-            updates.grid(row=0, column=10, sticky="e", padx=(PAD_M, 0))
+            updates.grid(row=0, column=11, sticky="e", padx=(PAD_M, 0))
             Tooltip(updates, TOOLTIPS["updates"])
 
     def _set_details(self, text: str) -> None:
@@ -653,6 +713,38 @@ class DocRenamerGUI:
         self.details.delete("1.0", "end")
         self.details.insert("1.0", text)
         self.details.configure(state="disabled")
+
+    def _set_preview_text(self, text: str) -> None:
+        """Показать текстовый предпросмотр вместо картинки."""
+        self.preview_image.grid_remove()
+        self.preview_photo = None
+        self.preview_text.grid()
+        self.preview_text.configure(state="normal")
+        self.preview_text.delete("1.0", "end")
+        self.preview_text.insert("1.0", text)
+        self.preview_text.configure(state="disabled")
+
+    def _show_preview(self, item: PlanItem) -> None:
+        """Показать содержимое выбранного файла.
+
+        Снимок и первая страница PDF показываются картинкой, всё остальное —
+        началом прочитанного текста: именно по нему строилось имя, поэтому по
+        нему же видно, справедливо ли оно.
+        """
+        data = None if item.is_folder else thumbnail_png(item.source_path)
+        if data is None:
+            self._set_preview_text(text_preview(item))
+            return
+        try:
+            photo = tk.PhotoImage(data=data)
+        except tk.TclError:
+            self._set_preview_text(text_preview(item))
+            return
+        # Ссылку надо держать: без неё Tk выбрасывает картинку сборщиком.
+        self.preview_photo = photo
+        self.preview_text.grid_remove()
+        self.preview_image.configure(image=photo, text="")
+        self.preview_image.grid()
 
     def _show_details(self, _event: object = None) -> None:
         """Полные имена выбранного файла — без обрезки по ширине колонки."""
@@ -666,6 +758,7 @@ class DocRenamerGUI:
         except (ValueError, IndexError):
             # Строка-группа: своей строки плана у неё нет.
             self._set_details("Папка показана для наглядности — переименование не предложено.")
+            self._set_preview_text(folder_preview(Path(selection[0].removeprefix("dir:"))))
             return
         lines = [f"Сейчас:  {item.source_path.name}"]
         if item.is_rename:
@@ -675,7 +768,9 @@ class DocRenamerGUI:
         )
         if item.message:
             lines.append(item.message)
+        lines.append(metadata_summary(item))
         self._set_details("\n".join(lines))
+        self._show_preview(item)
 
     # --- журнал и события --------------------------------------------------
 
@@ -1100,6 +1195,7 @@ class DocRenamerGUI:
                     "—",
                     f"{size:.0f} КБ" if size < 1024 else f"{size / 1024:.1f} МБ",
                     "Найден",
+                    format_stamp(scanned.mtime),
                 ),
                 tags=("warn",),
             )
@@ -1200,7 +1296,7 @@ class DocRenamerGUI:
                 "end",
                 iid=node,
                 text=f"📁 {directory.name}",
-                values=("", "—", "", "папка"),
+                values=("", "—", "", "папка", ""),
                 tags=("warn",),
                 open=True,
             )
@@ -1255,6 +1351,94 @@ class DocRenamerGUI:
                 "Изменение имени", "Выберите строку, имя которой нужно изменить."
             )
         return "break"
+
+    def _merge_selected(self) -> None:
+        """Объединить выбранные файлы в один документ по решению человека.
+
+        Программа не всегда может понять, что перед ней страницы: сканы без
+        распознавания ничем не отличаются от отдельных снимков. Тогда решает
+        человек, и его решение важнее любой догадки.
+        """
+        from tkinter import simpledialog
+
+        if self.plan is None:
+            messagebox.showinfo("Один документ", "Сначала нажмите «Предпросмотр».")
+            return
+        items = self._selected_plan_items()
+        pages = [item for item in items if not item.is_folder]
+        if len(pages) < 2:
+            messagebox.showinfo(
+                "Один документ",
+                "Отметьте страницы одного документа: несколько файлов мышью\n"
+                "с Ctrl или Shift — либо папку, в которой они лежат.",
+            )
+            return
+        suggestion = self._merge_suggestion(pages)
+        answer = simpledialog.askstring(
+            "Один документ",
+            f"Страниц выбрано: {len(pages)}.\n\nОбщее имя документа:",
+            initialvalue=suggestion,
+            parent=self.root,
+        )
+        if answer is None:
+            return
+        accepted, message = merge_as_document(self.plan, pages, answer)
+        if not accepted:
+            messagebox.showwarning("Один документ", message)
+            return
+        self._refresh_rows(pages)
+        self._update_select_all_label()
+        self._log(message)
+        for item in pages:
+            self.learning.record_plan_item(item, event="merged")
+
+    def _selected_plan_items(self) -> list[PlanItem]:
+        """Строки плана под выделением, включая содержимое выбранных папок."""
+        if self.plan is None:
+            return []
+        collected: list[PlanItem] = []
+        seen: set[int] = set()
+
+        def add(row: str) -> None:
+            try:
+                index = int(row)
+            except ValueError:
+                index = -1
+            if index >= 0 and index not in seen:
+                seen.add(index)
+                collected.append(self.plan.items[index])  # type: ignore[union-attr]
+            for child in self.tree.get_children(row):
+                add(child)
+
+        for row in self.tree.selection():
+            add(row)
+        return collected
+
+    def _merge_suggestion(self, pages: list[PlanItem]) -> str:
+        """Имя, предлагаемое для объединённого документа."""
+        for item in pages:
+            analysis = item.analysis
+            if analysis is None:
+                continue
+            value = analysis.document_type.value if analysis.document_type else ""
+            if value and not analysis.metadata.get("category_label_type"):
+                people = [person.name.split()[0] for person in analysis.main_persons[:1]]
+                return "_".join([str(value), *people])
+        return pages[0].source_path.parent.name
+
+    def _refresh_rows(self, items: list[PlanItem]) -> None:
+        """Перерисовать строки, изменённые вне обычного хода работы."""
+        if self.plan is None:
+            return
+        for item in items:
+            row = str(self.plan.items.index(item))
+            if self.tree.exists(row):
+                self.tree.item(
+                    row,
+                    text=plan_row_label(item),
+                    values=plan_row_values(item),
+                    tags=(row_tag(item),),
+                )
 
     def _edit_name(self, row: str) -> None:
         """Заменить предложенное имя на введённое человеком (раздел 79 ТЗ).

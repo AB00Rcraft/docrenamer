@@ -50,10 +50,12 @@ def format_plan_row(item: PlanItem) -> tuple[str, str, str, str, str]:
     )
 
 
-def plan_row_values(item: PlanItem) -> tuple[str, str, str, str]:
+def plan_row_values(item: PlanItem) -> tuple[str, str, str, str, str]:
     """Значения строки дерева: имя стоит в колонке дерева, отдельно от них."""
+    from docrenamer.preview import metadata_cell
+
     mark, _current, proposed, confidence, status = format_plan_row(item)
-    return (mark, proposed, confidence, status)
+    return (mark, proposed, confidence, status, metadata_cell(item))
 
 
 def plan_row_label(item: PlanItem) -> str:

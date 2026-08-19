@@ -358,6 +358,20 @@ def rename_file(
             f"{source.name} → {target.name}"
         )
 
+    # Шаг 10: метаданные файла не тронуты. Переименование меняет запись в
+    # каталоге, а не сам файл: размер и время изменения обязаны остаться
+    # прежними, и это проверяется, а не предполагается.
+    try:
+        stat_after = target.stat()
+        size_after, mtime_after = stat_after.st_size, stat_after.st_mtime
+    except OSError:
+        size_after, mtime_after = -1, -1.0
+    if size_after >= 0 and size_after != stat.st_size:
+        raise CriticalSafetyError(
+            "CRITICAL_SIZE_MISMATCH: размер файла изменился при переименовании "
+            f"{source.name} → {target.name}"
+        )
+
     record = RenameRecord(
         source_path=source,
         target_path=target,
@@ -372,6 +386,8 @@ def rename_file(
         status=Status.RENAMED.value,
         timestamp=utcstamp(),
         message=f"method={method}",
+        size_after=size_after,
+        mtime_after=mtime_after,
     )
     return RenameOutcome(
         ok=True,

@@ -437,6 +437,17 @@ class RenameRecord:
     #: «file» или «folder». Папка не имеет контрольной суммы, и откат для неё
     #: проверяется иначе.
     kind: str = "file"
+    #: Размер и время изменения, снятые уже после переименования. Совпадение
+    #: с исходными — прямое подтверждение, что метаданные файла не тронуты.
+    size_after: int = -1
+    mtime_after: float = -1.0
+
+    @property
+    def metadata_preserved(self) -> bool:
+        """Остались ли размер и время изменения прежними."""
+        if self.size_after < 0 or self.mtime_after < 0:
+            return True
+        return self.size_after == self.size and abs(self.mtime_after - self.mtime) <= 1.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -454,6 +465,9 @@ class RenameRecord:
             "status": self.status,
             "timestamp": self.timestamp,
             "message": self.message,
+            "size_after": self.size_after,
+            "mtime_after": self.mtime_after,
+            "metadata_preserved": self.metadata_preserved,
         }
 
 

@@ -28,7 +28,12 @@ from docrenamer.extractors.organizations import extract_organizations, select_or
 from docrenamer.extractors.persons import extract_persons, select_persons
 from docrenamer.extractors.series import ScanPage, detect_scan_pages, detect_series
 from docrenamer.file_signature import check_extension, detect_type
-from docrenamer.naming.builder import build_filename, is_well_formed_name
+from docrenamer.naming.builder import (
+    build_filename,
+    clean_original_stem,
+    is_meaningful_stem,
+    is_well_formed_name,
+)
 from docrenamer.naming.dates import format_date_for_name
 from docrenamer.paths import AppPaths, default_paths
 from docrenamer.security.limits import Limits
@@ -378,6 +383,7 @@ class Pipeline:
             if not self._looks_like_scanned_document(group, members[0][1]):
                 continue
             self._share_scan_facts(group)
+            self._name_scan_group(group)
             for path, page in members:
                 analysis = by_path.get(path)
                 if analysis is None:
@@ -441,6 +447,65 @@ class Pipeline:
                 ]
             analysis.metadata.pop("document_type_default", None)
 
+    def _name_scan_group(self, group: list[FileAnalysis]) -> None:
+        """Назвать пачку сканов, о содержимом которой ничего не известно.
+
+        Так бывает, когда распознавание не установлено: страницы прочитаны, но
+        текста нет. Имя папки в этом случае — единственное, что о документе
+        сказал человек, и оно точнее любой догадки: папка «Иск Шахмановой»
+        даёт «Иск_Шахмановой_стр_1». Если и папка названа технически, страницы
+        честно называются сканами.
+        """
+        informative = any(
+            (
+                a.document_type is not None
+                and a.document_type.accepted
+                and not a.metadata.get("category_label_type")
+            )
+            or a.main_persons
+            or a.main_organizations
+            for a in group
+        )
+        if informative:
+            return
+
+        folder = group[0].source_path.parent
+        name = clean_original_stem(folder.name) if is_meaningful_stem(folder.name) else ""
+        type_value, subject_value = "Скан", ""
+        evidence = "вид файла: скан документа"
+        if name:
+            evidence = f"имя папки: {folder.name}"
+            best = select_document_type(self.type_matcher.match(name))
+            if best is not None:
+                type_value = self.type_matcher.abbreviation_for(best.value)
+                subject_value = _strip_words(name, type_value)
+            else:
+                type_value = "Скан"
+                subject_value = name
+
+        for analysis in group:
+            analysis.metadata.pop("category_label_type", None)
+            analysis.document_type = Field(
+                value=type_value,
+                source=Source.FILENAME if name else Source.METADATA,
+                evidence=evidence,
+                confidence=0.7,
+            )
+            if subject_value:
+                analysis.subject = Field(
+                    value=subject_value,
+                    source=Source.FILENAME,
+                    evidence=evidence,
+                    confidence=0.68,
+                )
+            # Время файловой системы у скана — это время копирования, а не
+            # дата документа: восемь одинаковых отметок в именах не нужны.
+            if (
+                analysis.document_date is not None
+                and analysis.document_date.source is Source.FILESYSTEM
+            ):
+                analysis.document_date = None
+
     @staticmethod
     def _scan_donor(group: list[FileAnalysis]) -> FileAnalysis | None:
         """Страница, по которой называется вся пачка.
@@ -488,7 +553,11 @@ class Pipeline:
             1 for a in group if len(a.read_result.text if a.read_result else "") > 40
         )
         if with_text < len(group) / 2:
-            return False
+            # Распознавания может не быть вовсе, и тогда текста нет ни на одной
+            # странице. Сканер, в отличие от камеры, не пишет в снимок модель
+            # аппарата — по этому и отличается пачка сканов от кадров съёмки.
+            from_camera = any(a.metadata.get("device") for a in group)
+            return len(group) >= 3 and first.numbered_from_one and not from_camera
         own_types = {
             str(a.document_type.value)
             for a in group
@@ -1201,6 +1270,13 @@ def _table_period(text: str) -> str:
     if first[:7] == last[:7]:
         return ""
     return first[:4] if first[:4] == last[:4] else f"{first[:4]}-{last[:4]}"
+
+
+def _strip_words(text: str, remove: str) -> str:
+    """Убрать из текста слова, уже сказанные другим сегментом имени."""
+    drop = {word.casefold() for word in re.split(r"[\s_]+", remove) if word}
+    kept = [word for word in re.split(r"[\s_]+", text) if word and word.casefold() not in drop]
+    return " ".join(kept)
 
 
 def _period_for_name(period: str, config: Config) -> str:

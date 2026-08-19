@@ -503,9 +503,12 @@ def _media_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     if subject_value:
         segments.append(Segment(subject_value, PRIORITY_SUBJECT, kind="subject"))
 
-    if (analysis.metadata or {}).get("photo_of_document"):
-        # Понятно, что это снимок, а не сам документ.
-        segments.append(Segment("фото", PRIORITY_ORIGINAL, kind="media_hint"))
+    metadata = analysis.metadata or {}
+    if metadata.get("photo_of_document"):
+        # Понятно, что это снимок, а не сам документ. У пачки страниц пометка
+        # не нужна: номер страницы и так говорит, что это скан документа.
+        if not metadata.get("scan_page"):
+            segments.append(Segment("фото", PRIORITY_ORIGINAL, kind="media_hint"))
         identifier = _value(analysis.document_number)
         if identifier:
             segments.append(

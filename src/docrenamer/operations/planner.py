@@ -444,3 +444,69 @@ def set_manual_name(plan: RenamePlan, item: PlanItem, name: str) -> tuple[bool, 
     if item.analysis is not None:
         item.analysis.metadata["manual_name"] = target_name
     return True, f"Имя задано вручную: {target_name}"
+
+
+def merge_as_document(
+    plan: RenamePlan, items: list[PlanItem], name: str
+) -> tuple[bool, str]:
+    """Считать выбранные файлы страницами одного документа (раздел 79 ТЗ).
+
+    Бывает, что программа не догадалась: сканы лежат без распознавания, имена
+    ничего не говорят, и восемь листов выглядят восемью документами. Тогда
+    решение принимает человек — отмечает файлы и объединяет их сам.
+
+    Порядок страниц берётся из имён: он и так задан нумерацией, а если номеров
+    нет — обычным порядком имён.
+
+    Returns:
+        ``(принято, сообщение)``.
+    """
+    pages = [item for item in items if not item.is_folder]
+    if len(pages) < 2:
+        return False, "Выберите хотя бы два файла — страницы одного документа."
+    directories = {item.source_path.parent for item in pages}
+    if len(directories) > 1:
+        return False, "Страницы одного документа должны лежать в одной папке."
+
+    base = sanitize_component(name, keep_spaces=True)
+    if not base:
+        return False, "Имя документа не может быть пустым."
+
+    ordered = sorted(pages, key=lambda item: _page_order(item.source_path))
+    width = len(str(len(ordered)))
+    taken = {
+        fold(other.target_path.name)
+        for other in plan.items
+        if other not in pages and other.target_path.parent in directories
+    }
+    prepared: list[tuple[PlanItem, str]] = []
+    for number, item in enumerate(ordered, start=1):
+        target = f"{base}_стр_{number:0{width}d}{normalize_extension(item.source_path.suffix)}"
+        if fold(target) in taken:
+            return False, f"Имя «{target}» уже занято другим файлом."
+        taken.add(fold(target))
+        prepared.append((item, target))
+
+    for item, target in prepared:
+        item.proposed_filename = target
+        item.target_path = item.source_path.parent / target
+        item.status = Status.OK.value
+        item.message = "Страница документа, объединено вручную."
+        item.selected = True
+        item.add_status(Status.MANUAL_NAME.value)
+        item.add_status(Status.SERIES_PART_DETECTED.value)
+        if item.analysis is not None:
+            item.analysis.metadata["manual_document"] = base
+    return True, f"Объединено страниц: {len(prepared)} — «{base}»."
+
+
+def _page_order(path: Path) -> tuple[int, str]:
+    """Порядок страницы: сначала по номеру в имени, затем по самому имени."""
+    from docrenamer.extractors.series import SCAN_HEAD_RE, SCAN_TAIL_RE
+
+    stem = path.stem.strip()
+    for pattern in (SCAN_HEAD_RE, SCAN_TAIL_RE):
+        match = pattern.match(stem)
+        if match is not None:
+            return int(match.group("num")), stem.casefold()
+    return 10**6, stem.casefold()
