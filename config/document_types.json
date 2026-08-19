@@ -3,6 +3,114 @@
   "language": "ru-RU",
   "types": [
     {
+      "canonical_name": "Водительское удостоверение",
+      "aliases": [],
+      "markers": [
+        "водительское удостоверение",
+        "driving licence",
+        "категории тс",
+        "разрешённые категории"
+      ],
+      "priority": 95,
+      "filename_abbreviation": "Водительское_удостоверение"
+    },
+    {
+      "canonical_name": "Заграничный паспорт",
+      "aliases": [],
+      "markers": [
+        "заграничный паспорт",
+        "passport",
+        "тип p pn",
+        "дата окончания срока действия"
+      ],
+      "priority": 95,
+      "filename_abbreviation": "Загранпаспорт"
+    },
+    {
+      "canonical_name": "Паспорт",
+      "aliases": [],
+      "markers": [
+        "паспорт гражданина",
+        "российская федерация паспорт",
+        "код подразделения",
+        "место рождения",
+        "выдан отделом"
+      ],
+      "priority": 95,
+      "filename_abbreviation": "Паспорт"
+    },
+    {
+      "canonical_name": "Военный билет",
+      "aliases": [],
+      "markers": [
+        "военный билет",
+        "военно-учётная специальность"
+      ],
+      "priority": 94,
+      "filename_abbreviation": "Военный_билет"
+    },
+    {
+      "canonical_name": "Полис ОМС",
+      "aliases": [],
+      "markers": [
+        "полис обязательного медицинского страхования",
+        "полис омс"
+      ],
+      "priority": 94,
+      "filename_abbreviation": "Полис_ОМС"
+    },
+    {
+      "canonical_name": "СНИЛС",
+      "aliases": [],
+      "markers": [
+        "страховое свидетельство",
+        "снилс",
+        "обязательного пенсионного страхования"
+      ],
+      "priority": 94,
+      "filename_abbreviation": "СНИЛС"
+    },
+    {
+      "canonical_name": "Свидетельство ИНН",
+      "aliases": [],
+      "markers": [
+        "свидетельство о постановке на учёт",
+        "идентификационный номер налогоплательщика"
+      ],
+      "priority": 94,
+      "filename_abbreviation": "Свидетельство_ИНН"
+    },
+    {
+      "canonical_name": "Свидетельство о браке",
+      "aliases": [],
+      "markers": [
+        "свидетельство о заключении брака",
+        "запись акта о заключении брака"
+      ],
+      "priority": 94,
+      "filename_abbreviation": "Свидетельство_о_браке"
+    },
+    {
+      "canonical_name": "Свидетельство о разводе",
+      "aliases": [],
+      "markers": [
+        "свидетельство о расторжении брака",
+        "запись акта о расторжении брака"
+      ],
+      "priority": 94,
+      "filename_abbreviation": "Свидетельство_о_разводе"
+    },
+    {
+      "canonical_name": "Свидетельство о рождении",
+      "aliases": [],
+      "markers": [
+        "свидетельство о рождении",
+        "запись акта о рождении"
+      ],
+      "priority": 94,
+      "filename_abbreviation": "Свидетельство_о_рождении"
+    },
+    {
       "canonical_name": "Апелляционное определение",
       "aliases": [],
       "markers": [
@@ -26,6 +134,17 @@
       "filename_abbreviation": "Кассационное_определение"
     },
     {
+      "canonical_name": "Свидетельство о регистрации ТС",
+      "aliases": [],
+      "markers": [
+        "свидетельство о регистрации транспортного средства",
+        "стс",
+        "регистрационный знак"
+      ],
+      "priority": 93,
+      "filename_abbreviation": "СТС"
+    },
+    {
       "canonical_name": "Апелляционное постановление",
       "aliases": [],
       "markers": [
@@ -34,6 +153,40 @@
       ],
       "priority": 92,
       "filename_abbreviation": "Апелляционное_постановление"
+    },
+    {
+      "canonical_name": "Виза",
+      "aliases": [],
+      "markers": [
+        "виза",
+        "visa",
+        "срок пребывания",
+        "schengen"
+      ],
+      "priority": 92,
+      "filename_abbreviation": "Виза"
+    },
+    {
+      "canonical_name": "Диплом",
+      "aliases": [],
+      "markers": [
+        "диплом",
+        "квалификация присуждена",
+        "об окончании",
+        "приложение к диплому"
+      ],
+      "priority": 92,
+      "filename_abbreviation": "Диплом"
+    },
+    {
+      "canonical_name": "Миграционная карта",
+      "aliases": [],
+      "markers": [
+        "миграционная карта",
+        "цель визита"
+      ],
+      "priority": 92,
+      "filename_abbreviation": "Миграционная_карта"
     },
     {
       "canonical_name": "Обвинительное заключение",
@@ -151,6 +304,29 @@
       "filename_abbreviation": "Решение_арбитражного_суда"
     },
     {
+      "canonical_name": "Служебное удостоверение",
+      "aliases": [],
+      "markers": [
+        "служебное удостоверение",
+        "удостоверение личности сотрудника"
+      ],
+      "priority": 90,
+      "filename_abbreviation": "Служебное_удостоверение"
+    },
+    {
+      "canonical_name": "Справка OSINT",
+      "aliases": [],
+      "markers": [
+        "osint",
+        "по открытым источникам",
+        "открытых источников информации",
+        "установочные данные",
+        "проверка по открытым источникам"
+      ],
+      "priority": 90,
+      "filename_abbreviation": "Справка_OSINT"
+    },
+    {
       "canonical_name": "Справка ситуационная",
       "aliases": [],
       "markers": [
@@ -169,6 +345,71 @@
       ],
       "priority": 90,
       "filename_abbreviation": "Справка_установочная"
+    },
+    {
+      "canonical_name": "Студенческий билет",
+      "aliases": [],
+      "markers": [
+        "студенческий билет",
+        "зачётная книжка"
+      ],
+      "priority": 90,
+      "filename_abbreviation": "Студенческий_билет"
+    },
+    {
+      "canonical_name": "Аудиторское заключение",
+      "aliases": [],
+      "markers": [
+        "аудиторское заключение",
+        "мнение аудитора",
+        "аудиторская проверка"
+      ],
+      "priority": 89,
+      "filename_abbreviation": "Аудиторское_заключение"
+    },
+    {
+      "canonical_name": "Бухгалтерский баланс",
+      "aliases": [],
+      "markers": [
+        "бухгалтерский баланс",
+        "форма по окуд 0710001",
+        "актив баланса"
+      ],
+      "priority": 89,
+      "filename_abbreviation": "Бухгалтерский_баланс"
+    },
+    {
+      "canonical_name": "Заключение специалиста",
+      "aliases": [],
+      "markers": [
+        "заключение специалиста",
+        "специалистом сделаны выводы"
+      ],
+      "priority": 89,
+      "filename_abbreviation": "Заключение_специалиста"
+    },
+    {
+      "canonical_name": "Налоговая декларация",
+      "aliases": [],
+      "markers": [
+        "налоговая декларация",
+        "декларация по налогу",
+        "налоговый период",
+        "по налогу на добавленную стоимость"
+      ],
+      "priority": 89,
+      "filename_abbreviation": "Налоговая_декларация"
+    },
+    {
+      "canonical_name": "Правовое заключение",
+      "aliases": [],
+      "markers": [
+        "правовое заключение",
+        "юридическое заключение",
+        "правовой анализ"
+      ],
+      "priority": 89,
+      "filename_abbreviation": "Правовое_заключение"
     },
     {
       "canonical_name": "Апелляционное представление",
@@ -201,6 +442,17 @@
       "filename_abbreviation": "Выписка_ЕГРЮЛ"
     },
     {
+      "canonical_name": "Выписной эпикриз",
+      "aliases": [],
+      "markers": [
+        "выписной эпикриз",
+        "эпикриз",
+        "выписка из истории болезни"
+      ],
+      "priority": 88,
+      "filename_abbreviation": "Выписной_эпикриз"
+    },
+    {
       "canonical_name": "Заключение эксперта",
       "aliases": [
         "экспертное заключение",
@@ -216,6 +468,16 @@
       "filename_abbreviation": "Заключение_эксперта"
     },
     {
+      "canonical_name": "Листок нетрудоспособности",
+      "aliases": [],
+      "markers": [
+        "листок нетрудоспособности",
+        "больничный лист"
+      ],
+      "priority": 88,
+      "filename_abbreviation": "Больничный_лист"
+    },
+    {
       "canonical_name": "Мировое соглашение",
       "aliases": [],
       "markers": [
@@ -223,6 +485,28 @@
       ],
       "priority": 88,
       "filename_abbreviation": "Мировое_соглашение"
+    },
+    {
+      "canonical_name": "Отчёт о финансовых результатах",
+      "aliases": [],
+      "markers": [
+        "отчёт о финансовых результатах",
+        "отчет о финансовых результатах",
+        "выручка себестоимость"
+      ],
+      "priority": 88,
+      "filename_abbreviation": "Отчет_о_фин_результатах"
+    },
+    {
+      "canonical_name": "Отчёт об оценке",
+      "aliases": [],
+      "markers": [
+        "отчёт об оценке",
+        "отчет об оценке",
+        "рыночная стоимость объекта оценки"
+      ],
+      "priority": 88,
+      "filename_abbreviation": "Отчет_об_оценке"
     },
     {
       "canonical_name": "Постановление дознавателя",
@@ -270,6 +554,17 @@
       "filename_abbreviation": "Протокол_заседания"
     },
     {
+      "canonical_name": "Справка о доходах",
+      "aliases": [],
+      "markers": [
+        "справка о доходах",
+        "2-ндфл",
+        "справка о доходах и суммах налога"
+      ],
+      "priority": 88,
+      "filename_abbreviation": "Справка_о_доходах"
+    },
+    {
       "canonical_name": "Судебный приказ",
       "aliases": [],
       "markers": [
@@ -281,6 +576,139 @@
       "filename_abbreviation": "Судебный_приказ"
     },
     {
+      "canonical_name": "Универсальный передаточный документ",
+      "aliases": [],
+      "markers": [
+        "универсальный передаточный документ",
+        "упд",
+        "статус документа: 1"
+      ],
+      "priority": 88,
+      "filename_abbreviation": "УПД"
+    },
+    {
+      "canonical_name": "Авансовый отчёт",
+      "aliases": [],
+      "markers": [
+        "авансовый отчёт",
+        "авансовый отчет",
+        "подотчётное лицо"
+      ],
+      "priority": 87,
+      "filename_abbreviation": "Авансовый_отчет"
+    },
+    {
+      "canonical_name": "Акт скрытых работ",
+      "aliases": [],
+      "markers": [
+        "акт освидетельствования скрытых работ",
+        "скрытых работ"
+      ],
+      "priority": 87,
+      "filename_abbreviation": "Акт_скрытых_работ"
+    },
+    {
+      "canonical_name": "Оборотно-сальдовая ведомость",
+      "aliases": [],
+      "markers": [
+        "оборотно-сальдовая ведомость",
+        "осв по счёту",
+        "сальдо на начало периода"
+      ],
+      "priority": 87,
+      "filename_abbreviation": "ОСВ"
+    },
+    {
+      "canonical_name": "Приходный кассовый ордер",
+      "aliases": [],
+      "markers": [
+        "приходный кассовый ордер",
+        "квитанция к приходному кассовому ордеру"
+      ],
+      "priority": 87,
+      "filename_abbreviation": "Приходный_ордер"
+    },
+    {
+      "canonical_name": "Расходный кассовый ордер",
+      "aliases": [],
+      "markers": [
+        "расходный кассовый ордер"
+      ],
+      "priority": 87,
+      "filename_abbreviation": "Расходный_ордер"
+    },
+    {
+      "canonical_name": "Расчёт по страховым взносам",
+      "aliases": [],
+      "markers": [
+        "расчёт по страховым взносам",
+        "рсв",
+        "страховые взносы за период"
+      ],
+      "priority": 87,
+      "filename_abbreviation": "РСВ"
+    },
+    {
+      "canonical_name": "Товарно-транспортная накладная",
+      "aliases": [],
+      "markers": [
+        "товарно-транспортная накладная",
+        "ттн",
+        "пункт погрузки"
+      ],
+      "priority": 87,
+      "filename_abbreviation": "ТТН"
+    },
+    {
+      "canonical_name": "Акт ввода в эксплуатацию",
+      "aliases": [],
+      "markers": [
+        "акт ввода в эксплуатацию",
+        "введён в промышленную эксплуатацию"
+      ],
+      "priority": 86,
+      "filename_abbreviation": "Акт_ввода_в_эксплуатацию"
+    },
+    {
+      "canonical_name": "Дью-дилидженс",
+      "aliases": [],
+      "markers": [
+        "дью-дилидженс",
+        "due diligence",
+        "комплексная проверка контрагента"
+      ],
+      "priority": 86,
+      "filename_abbreviation": "Дью_дилидженс"
+    },
+    {
+      "canonical_name": "Инвентаризационная опись",
+      "aliases": [],
+      "markers": [
+        "инвентаризационная опись",
+        "инвентаризация товарно-материальных"
+      ],
+      "priority": 86,
+      "filename_abbreviation": "Инвентаризационная_опись"
+    },
+    {
+      "canonical_name": "Книга покупок",
+      "aliases": [],
+      "markers": [
+        "книга покупок"
+      ],
+      "priority": 86,
+      "filename_abbreviation": "Книга_покупок"
+    },
+    {
+      "canonical_name": "Книга продаж",
+      "aliases": [],
+      "markers": [
+        "книга продаж"
+      ],
+      "priority": 86,
+      "filename_abbreviation": "Книга_продаж"
+    },
+    {
       "canonical_name": "Надзорная жалоба",
       "aliases": [],
       "markers": [
@@ -288,6 +716,18 @@
       ],
       "priority": 86,
       "filename_abbreviation": "Надзорная_жалоба"
+    },
+    {
+      "canonical_name": "Отчёт об инциденте",
+      "aliases": [],
+      "markers": [
+        "отчёт об инциденте",
+        "постмортем",
+        "post-mortem",
+        "разбор инцидента"
+      ],
+      "priority": 86,
+      "filename_abbreviation": "Отчет_об_инциденте"
     },
     {
       "canonical_name": "Паспорт транспортного средства",
@@ -312,6 +752,28 @@
       "filename_abbreviation": "Протокол_собрания"
     },
     {
+      "canonical_name": "Протокол приёмочных испытаний",
+      "aliases": [],
+      "markers": [
+        "протокол приёмочных испытаний",
+        "приёмочные испытания",
+        "программа и методика испытаний"
+      ],
+      "priority": 86,
+      "filename_abbreviation": "Протокол_испытаний"
+    },
+    {
+      "canonical_name": "Результаты анализов",
+      "aliases": [],
+      "markers": [
+        "результаты анализов",
+        "референсные значения",
+        "лабораторное исследование"
+      ],
+      "priority": 86,
+      "filename_abbreviation": "Результаты_анализов"
+    },
+    {
       "canonical_name": "Решение единственного участника",
       "aliases": [],
       "markers": [
@@ -332,6 +794,16 @@
       "filename_abbreviation": "Согласие_на_обработку"
     },
     {
+      "canonical_name": "Табель учёта рабочего времени",
+      "aliases": [],
+      "markers": [
+        "табель учёта рабочего времени",
+        "табель учета рабочего времени"
+      ],
+      "priority": 86,
+      "filename_abbreviation": "Табель"
+    },
+    {
       "canonical_name": "Трудовой договор",
       "aliases": [],
       "markers": [
@@ -350,6 +822,16 @@
       ],
       "priority": 86,
       "filename_abbreviation": "Частная_жалоба"
+    },
+    {
+      "canonical_name": "Штатное расписание",
+      "aliases": [],
+      "markers": [
+        "штатное расписание",
+        "количество штатных единиц"
+      ],
+      "priority": 86,
+      "filename_abbreviation": "Штатное_расписание"
     },
     {
       "canonical_name": "Апелляционная жалоба",
@@ -374,6 +856,17 @@
       ],
       "priority": 85,
       "filename_abbreviation": "Кассационная_жалоба"
+    },
+    {
+      "canonical_name": "Лицензионное соглашение",
+      "aliases": [],
+      "markers": [
+        "лицензионное соглашение",
+        "лицензионный договор",
+        "end user license"
+      ],
+      "priority": 85,
+      "filename_abbreviation": "Лицензионное_соглашение"
     },
     {
       "canonical_name": "Письмо о намерениях",
@@ -488,6 +981,17 @@
       "filename_abbreviation": "Аналитическая_записка"
     },
     {
+      "canonical_name": "Архитектурное решение",
+      "aliases": [],
+      "markers": [
+        "архитектурное решение",
+        "architecture decision record",
+        "схема архитектуры"
+      ],
+      "priority": 84,
+      "filename_abbreviation": "Архитектурное_решение"
+    },
+    {
       "canonical_name": "Бизнес-план",
       "aliases": [],
       "markers": [
@@ -518,6 +1022,64 @@
       "filename_abbreviation": "Кадастровый_паспорт"
     },
     {
+      "canonical_name": "Описание API",
+      "aliases": [],
+      "markers": [
+        "описание api",
+        "api reference",
+        "документация api",
+        "спецификация openapi"
+      ],
+      "priority": 84,
+      "filename_abbreviation": "Описание_API"
+    },
+    {
+      "canonical_name": "Отчёт о тестировании",
+      "aliases": [],
+      "markers": [
+        "отчёт о тестировании",
+        "отчет о тестировании",
+        "результаты тестирования",
+        "тест-план",
+        "протокол испытаний по"
+      ],
+      "priority": 84,
+      "filename_abbreviation": "Отчет_о_тестировании"
+    },
+    {
+      "canonical_name": "Проектная документация",
+      "aliases": [],
+      "markers": [
+        "проектная документация",
+        "рабочая документация",
+        "шифр проекта"
+      ],
+      "priority": 84,
+      "filename_abbreviation": "Проектная_документация"
+    },
+    {
+      "canonical_name": "Руководство администратора",
+      "aliases": [],
+      "markers": [
+        "руководство администратора",
+        "инструкция по установке",
+        "руководство по развёртыванию"
+      ],
+      "priority": 84,
+      "filename_abbreviation": "Руководство_администратора"
+    },
+    {
+      "canonical_name": "Руководство пользователя",
+      "aliases": [],
+      "markers": [
+        "руководство пользователя",
+        "инструкция пользователя",
+        "user guide"
+      ],
+      "priority": 84,
+      "filename_abbreviation": "Руководство_пользователя"
+    },
+    {
       "canonical_name": "Соглашение о расторжении",
       "aliases": [],
       "markers": [
@@ -526,6 +1088,17 @@
       ],
       "priority": 84,
       "filename_abbreviation": "Соглашение_о_расторжении"
+    },
+    {
+      "canonical_name": "Спецификация требований",
+      "aliases": [],
+      "markers": [
+        "спецификация требований",
+        "software requirements",
+        "функциональные требования"
+      ],
+      "priority": 84,
+      "filename_abbreviation": "Спецификация_требований"
     },
     {
       "canonical_name": "Страховой полис",
@@ -571,6 +1144,17 @@
       "filename_abbreviation": "Финансовая_модель"
     },
     {
+      "canonical_name": "Аналитический отчёт",
+      "aliases": [],
+      "markers": [
+        "аналитический отчёт",
+        "аналитический отчет",
+        "по результатам анализа"
+      ],
+      "priority": 82,
+      "filename_abbreviation": "Аналитический_отчет"
+    },
+    {
       "canonical_name": "Гарантийное письмо",
       "aliases": [],
       "markers": [
@@ -589,6 +1173,17 @@
       ],
       "priority": 82,
       "filename_abbreviation": "Дорожная_карта"
+    },
+    {
+      "canonical_name": "Обзор рынка",
+      "aliases": [],
+      "markers": [
+        "обзор рынка",
+        "анализ рынка",
+        "рыночный обзор"
+      ],
+      "priority": 82,
+      "filename_abbreviation": "Обзор_рынка"
     },
     {
       "canonical_name": "Резюме проекта",
@@ -637,6 +1232,18 @@
       ],
       "priority": 80,
       "filename_abbreviation": "Акт_сверки"
+    },
+    {
+      "canonical_name": "Анкета",
+      "aliases": [],
+      "markers": [
+        "анкета",
+        "анкета кандидата",
+        "заполните анкету",
+        "сведения о себе"
+      ],
+      "priority": 80,
+      "filename_abbreviation": "Анкета"
     },
     {
       "canonical_name": "Банковская выписка",
@@ -711,6 +1318,18 @@
       ],
       "priority": 80,
       "filename_abbreviation": "Протокол_встречи"
+    },
+    {
+      "canonical_name": "Список изменений",
+      "aliases": [],
+      "markers": [
+        "список изменений",
+        "changelog",
+        "release notes",
+        "что нового в версии"
+      ],
+      "priority": 80,
+      "filename_abbreviation": "Список_изменений"
     },
     {
       "canonical_name": "Договор аренды",
@@ -853,6 +1472,38 @@
       "filename_abbreviation": "Спецификация"
     },
     {
+      "canonical_name": "Бюджет",
+      "aliases": [],
+      "markers": [
+        "бюджет проекта",
+        "бюджет на период",
+        "статьи бюджета"
+      ],
+      "priority": 76,
+      "filename_abbreviation": "Бюджет"
+    },
+    {
+      "canonical_name": "Калькуляция",
+      "aliases": [],
+      "markers": [
+        "калькуляция стоимости",
+        "калькуляция затрат"
+      ],
+      "priority": 76,
+      "filename_abbreviation": "Калькуляция"
+    },
+    {
+      "canonical_name": "План работ",
+      "aliases": [],
+      "markers": [
+        "план работ",
+        "план-график работ",
+        "календарный план"
+      ],
+      "priority": 76,
+      "filename_abbreviation": "План_работ"
+    },
+    {
       "canonical_name": "Прайс-лист",
       "aliases": [],
       "markers": [
@@ -888,6 +1539,17 @@
       "filename_abbreviation": "Доп_соглашение"
     },
     {
+      "canonical_name": "Ведомость",
+      "aliases": [],
+      "markers": [
+        "ведомость",
+        "платёжная ведомость",
+        "сводная ведомость"
+      ],
+      "priority": 74,
+      "filename_abbreviation": "Ведомость"
+    },
+    {
       "canonical_name": "Приложение к договору",
       "aliases": [],
       "markers": [
@@ -896,6 +1558,17 @@
       ],
       "priority": 74,
       "filename_abbreviation": "Приложение_к_договору"
+    },
+    {
+      "canonical_name": "Реестр",
+      "aliases": [],
+      "markers": [
+        "реестр",
+        "реестр документов",
+        "реестр платежей"
+      ],
+      "priority": 74,
+      "filename_abbreviation": "Реестр"
     },
     {
       "canonical_name": "Резюме",

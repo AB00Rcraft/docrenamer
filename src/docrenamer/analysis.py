@@ -26,7 +26,7 @@ from docrenamer.extractors.identifiers import (
 )
 from docrenamer.extractors.organizations import extract_organizations, select_organizations
 from docrenamer.extractors.persons import extract_persons, select_persons
-from docrenamer.extractors.series import detect_series
+from docrenamer.extractors.series import ScanPage, detect_scan_pages, detect_series
 from docrenamer.file_signature import check_extension, detect_type
 from docrenamer.naming.builder import build_filename, is_well_formed_name
 from docrenamer.paths import AppPaths, default_paths
@@ -64,6 +64,9 @@ FILE_KIND_LABELS: dict[str, str] = {
     "csv": "Таблица",
 }
 
+#: Виды файлов, которые разбираются как таблицы.
+SPREADSHEET_KINDS: frozenset[str] = frozenset({"xlsx", "xlsm", "xls", "csv", "ods"})
+
 #: Если вид документа определить не удалось, имя всё равно начинается с
 #: обозначения вида: первое слово имени — это то, что человек ищет глазами.
 DEFAULT_DOCUMENT_LABEL = "Документ"
@@ -78,6 +81,10 @@ class Analyzer(Protocol):
 
     def model_info(self) -> dict[str, Any]:
         """Сведения о локальной модели для manifest."""
+        ...
+
+    def analyze_folder(self, folder: Path, children: list[FileAnalysis]) -> FileAnalysis:
+        """Разобрать папку по её содержимому."""
         ...
 
     def postprocess(self, analyses: list[FileAnalysis]) -> None:
@@ -198,6 +205,103 @@ class Pipeline:
 
     # --- расширяемые этапы -------------------------------------------------
 
+    def analyze_folder(self, folder: Path, children: list[FileAnalysis]) -> FileAnalysis:
+        """Разобрать папку по тому, что в ней лежит.
+
+        Папка получает имя от своего содержимого: преобладающий вид документов,
+        общий участник, номер дела и период. Если содержимое разнородное,
+        предложения не будет — выдумывать общий смысл нельзя (раздел 92 ТЗ).
+        """
+        from collections import Counter
+
+        analysis = FileAnalysis(source_path=folder, detected_type="folder")
+        analysis.category = Category.FOLDER
+        inside = [
+            child
+            for child in children
+            if child.source_path.parent == folder
+        ]
+        analysis.metadata["files_inside"] = len(inside)
+        if not inside:
+            analysis.add_status(Status.EMPTY_DOCUMENT)
+            return analysis
+
+        types = Counter(
+            str(child.document_type.value)
+            for child in inside
+            if child.document_type is not None and child.document_type.accepted
+        )
+        if types:
+            label, count = types.most_common(1)[0]
+            share = count / len(inside)
+            # Вид папки называем, только если он преобладает: смешанную папку
+            # нельзя назвать по одному документу из десяти.
+            if share >= 0.5:
+                analysis.document_type = Field(
+                    value=label,
+                    source=Source.METADATA,
+                    evidence=f"{count} из {len(inside)} файлов — {label}",
+                    confidence=min(0.95, 0.6 + share * 0.35),
+                )
+
+        people = Counter(
+            person.name for child in inside for person in child.main_persons if person.name
+        )
+        organizations = Counter(
+            org.name for child in inside for org in child.main_organizations if org.name
+        )
+        for counter, target in ((people, "main_persons"), (organizations, "main_organizations")):
+            if not counter:
+                continue
+            name, count = counter.most_common(1)[0]
+            if count < max(2, len(inside) // 3):
+                continue
+            setattr(
+                analysis,
+                target,
+                [
+                    EntityRef(
+                        name=name,
+                        role="",
+                        confidence=min(0.95, 0.6 + count / len(inside) * 0.35),
+                        evidence=f"встречается в {count} из {len(inside)} файлов",
+                        source=Source.METADATA,
+                    )
+                ],
+            )
+
+        numbers = Counter(
+            str(field_value.value)
+            for child in inside
+            for field_value in child.case_numbers
+            if field_value.accepted
+        )
+        if numbers:
+            value, count = numbers.most_common(1)[0]
+            if count >= 2:
+                analysis.case_numbers = [
+                    Field(
+                        value=value,
+                        source=Source.METADATA,
+                        evidence=f"номер повторяется в {count} файлах",
+                        confidence=0.9,
+                    )
+                ]
+
+        period = _folder_period(inside)
+        if period:
+            analysis.metadata["period"] = period
+
+        analysis.overall_confidence = compute_confidence(analysis)
+        name, _dropped = build_filename(analysis, self.config)
+        analysis.proposed_filename = (
+            name if name and name != folder.name else ""
+        )
+        if not analysis.proposed_filename:
+            analysis.add_status(Status.NO_NAME_PROPOSED)
+        self._collect_evidence(analysis)
+        return analysis
+
     def postprocess(self, analyses: list[FileAnalysis]) -> None:
         """Уточнения, которые видны только на уровне всего каталога.
 
@@ -207,9 +311,10 @@ class Pipeline:
         файлы.
         """
         series = detect_series([a.source_path for a in analyses])
+        by_path = {a.source_path: a for a in analyses}
+        self._apply_scan_pages(analyses, skip=set(series))
         if not series:
             return
-        by_path = {a.source_path: a for a in analyses}
 
         groups: dict[tuple[Any, str, str], list[Path]] = {}
         for path, info in series.items():
@@ -227,6 +332,87 @@ class Pipeline:
             analysis.metadata["series"] = info.to_dict()
             analysis.add_status(Status.SERIES_PART_DETECTED)
             self.finalize(analysis)
+
+    def _apply_scan_pages(self, analyses: list[FileAnalysis], *, skip: set[Path]) -> None:
+        """Пронумеровать страницы подряд отснятого документа.
+
+        Снимки делают один за другим, поэтому порядок страниц виден по номерам
+        камеры. Он и сохраняется в имени, а недостающие реквизиты берутся с той
+        страницы, где они пропечатались: на втором развороте паспорта слова
+        «паспорт» уже нет.
+
+        Пачкой страниц группа признаётся только по содержимому: подряд снятые
+        кадры отпуска нумеруются точно так же, но документом не являются.
+        """
+        candidates = [
+            a
+            for a in analyses
+            if a.source_path not in skip
+            and (a.category is Category.IMAGE or a.detected_type == "pdf")
+        ]
+        if len(candidates) < 2:
+            return
+        pages = detect_scan_pages([a.source_path for a in candidates])
+        if not pages:
+            return
+        by_path = {a.source_path: a for a in candidates}
+
+        groups: dict[tuple[Any, str, str], list[tuple[Path, ScanPage]]] = {}
+        for path, page in pages.items():
+            key = (path.parent, path.suffix.lower(), page.prefix)
+            groups.setdefault(key, []).append((path, page))
+
+        for members in groups.values():
+            members.sort(key=lambda item: item[1].page)
+            group = [by_path[path] for path, _ in members if path in by_path]
+            if not self._looks_like_scanned_document(group):
+                continue
+            self._share_scan_facts(group)
+            for (path, page) in members:
+                analysis = by_path.get(path)
+                if analysis is None:
+                    continue
+                analysis.metadata["scan_page"] = page.to_dict()
+                analysis.metadata["photo_of_document"] = True
+                analysis.add_status(Status.SERIES_PART_DETECTED)
+                self.finalize(analysis)
+
+    def _share_scan_facts(self, group: list[FileAnalysis]) -> None:
+        """Распространить узнанное с титульной страницы на остальные."""
+        for analysis in group:
+            # «Фото» — это подпись категории, а не вид документа: она не должна
+            # мешать настоящему названию перейти с первой страницы.
+            if analysis.metadata.get("category_label_type"):
+                analysis.document_type = None
+        self._share_series_facts(group, {})
+        donor = max(
+            (a for a in group if a.main_persons),
+            key=lambda a: a.main_persons[0].confidence,
+            default=None,
+        )
+        if donor is None:
+            return
+        for analysis in group:
+            if analysis is donor or analysis.main_persons:
+                continue
+            analysis.main_persons = list(donor.main_persons)
+
+    @staticmethod
+    def _looks_like_scanned_document(group: list[FileAnalysis]) -> bool:
+        """Похожа ли пачка снимков на страницы одного документа."""
+        if len(group) < 2:
+            return False
+        recognized = sum(
+            1
+            for a in group
+            if a.document_type is not None
+            and a.document_type.source is Source.TEXT
+            and a.document_type.accepted
+        )
+        with_text = sum(
+            1 for a in group if len(a.read_result.text if a.read_result else "") > 40
+        )
+        return recognized >= 1 and with_text >= len(group) / 2
 
     def _share_series_facts(
         self, group: list[FileAnalysis], series: dict[Path, Any]
@@ -283,6 +469,8 @@ class Pipeline:
         text = analysis.read_result.text if analysis.read_result else ""
         if analysis.category in (Category.IMAGE, Category.VIDEO, Category.AUDIO):
             self._enrich_media(analysis, text)
+        elif analysis.detected_type in SPREADSHEET_KINDS:
+            self._enrich_spreadsheet(analysis, text)
         elif analysis.category is Category.EMAIL:
             self._enrich_email(analysis, text)
         elif analysis.category is Category.ARCHIVE:
@@ -452,22 +640,33 @@ class Pipeline:
             analysis.candidates["document_type"] = type_candidates[:5]
             best_type = select_document_type(type_candidates)
             if best_type is not None and best_type.confidence >= 0.75:
+                # Снимок документа называется по самому документу: «Паспорт»,
+                # «Водительское удостоверение». Пометка «фото» уходит в конец,
+                # чтобы имя начиналось с вида документа.
                 analysis.document_type = Field(
-                    value="Фото-документа",
-                    source=Source.TEXT,
-                    evidence=best_type.context,
-                    confidence=min(0.9, best_type.confidence),
-                )
-                analysis.subject = Field(
                     value=self.type_matcher.abbreviation_for(best_type.value),
                     source=Source.TEXT,
                     evidence=best_type.context,
-                    confidence=best_type.confidence,
+                    confidence=min(0.93, best_type.confidence),
                 )
-                organizations = extract_organizations(document_text)
+                analysis.metadata["document_type_canonical"] = best_type.value
+                analysis.metadata["photo_of_document"] = True
+                analysis.main_persons = select_persons(
+                    extract_persons(document_text), self.config.naming.max_persons_in_filename
+                )
                 analysis.main_organizations = select_organizations(
-                    organizations, self.config.naming.max_organizations_in_filename
+                    extract_organizations(document_text),
+                    self.config.naming.max_organizations_in_filename,
                 )
+                identifiers = extract_identifiers(document_text)
+                main_identifier = select_identifier(identifiers)
+                if main_identifier is not None:
+                    analysis.document_number = Field(
+                        value=main_identifier.value,
+                        source=main_identifier.source,
+                        evidence=main_identifier.context,
+                        confidence=main_identifier.confidence,
+                    )
                 label = ""
         # «Фото»/«Видео» добавляется, только когда устройство неизвестно: при
         # наличии модели камеры подпись категории избыточна (примеры разделов
@@ -479,6 +678,9 @@ class Pipeline:
             # наоборот, собирает все фотографии рядом.
             label = ""
         if label and analysis.document_type is None:
+            # Это подпись категории, а не узнанный вид документа: на соседней
+            # странице скана она уступит место настоящему названию.
+            analysis.metadata["category_label_type"] = True
             analysis.document_type = Field(
                 value=label,
                 source=Source.METADATA,
@@ -486,6 +688,58 @@ class Pipeline:
                 confidence=0.9,
             )
         self._collect_evidence(analysis)
+
+    def _enrich_spreadsheet(self, analysis: FileAnalysis, text: str) -> None:
+        """Таблицы: реестры, ведомости, сметы, бюджеты (раздел 18 ТЗ).
+
+        Таблица отличается от текстового документа двумя вещами. Во-первых, её
+        суть чаще всего написана на ярлычке листа, а не в первой строке. Во-
+        вторых, дат в ней десятки: одна ячейка ничего не значит, поэтому в имя
+        идёт период, который таблица охватывает.
+        """
+        self._enrich_document(analysis, text)
+        metadata = analysis.metadata
+        sheets = [str(name) for name in metadata.get("sheet_names") or []]
+
+        # Ярлычок листа — это подпись, которую человек дал таблице сам. Если
+        # вид документа написан на нём, «Смета» точнее нейтральной «Таблицы».
+        if metadata.get("document_type_default") or (
+            analysis.document_type is not None
+            and analysis.document_type.value in FILE_KIND_LABELS.values()
+        ):
+            named = _type_named_on_sheet(analysis.candidates.get("document_type", []), sheets)
+            if named is not None:
+                analysis.document_type = Field(
+                    value=self.type_matcher.abbreviation_for(named.value),
+                    source=Source.TEXT,
+                    evidence=f"ярлычок листа: {named.value}",
+                    confidence=0.8,
+                )
+                metadata["document_type_canonical"] = named.value
+                metadata.pop("document_type_default", None)
+
+        subject_value = analysis.subject.value if analysis.subject is not None else ""
+        if not subject_value or (analysis.subject is not None and not analysis.subject.accepted):
+            label = _sheet_subject(metadata.get("sheet_names"), metadata.get("title"))
+            if label:
+                analysis.subject = Field(
+                    value=label,
+                    source=Source.METADATA,
+                    evidence=f"лист «{label}»",
+                    confidence=0.72,
+                )
+
+        period = _table_period(text)
+        if period:
+            metadata["period"] = period
+            date_field = analysis.document_date
+            if date_field is None or date_field.source in (Source.TEXT, Source.REGEX):
+                # Дата из ячейки относится к своей строке, а не ко всей книге:
+                # в имени она обманывала бы. Дата из свойств файла остаётся.
+                analysis.document_date = None
+
+        if len(sheets) > 1:
+            metadata["sheet_count"] = len(sheets)
 
     def _enrich_email(self, analysis: FileAnalysis, text: str) -> None:
         """Письма: дата, тема и корреспонденты (разделы 30, 31 ТЗ)."""
@@ -805,6 +1059,78 @@ class Pipeline:
                 analysis.add_status(Status.NO_NAME_PROPOSED)
             else:
                 analysis.add_status(Status.NAME_UNCHANGED)
+
+
+#: Ярлычки листов, которые ничего не сообщают о содержимом.
+GENERIC_SHEET_RE = re.compile(r"^(лист|sheet|таблица|table|книга|book|данные|data)\s*\d*$", re.I)
+
+
+def _type_named_on_sheet(candidates: list[Candidate], sheets: list[str]) -> Candidate | None:
+    """Вид документа, написанный прямо на ярлычке листа."""
+    keys = [comparison_key(sheet) for sheet in sheets]
+    for candidate in candidates[:5]:
+        value = comparison_key(str(candidate.value))
+        if len(value) < 4:
+            continue
+        if any(value in key for key in keys if key):
+            return candidate
+    return None
+
+
+def _sheet_subject(sheet_names: Any, title: Any = None) -> str:
+    """Суть таблицы: осмысленный ярлычок листа или заголовок книги."""
+    candidates: list[str] = []
+    if isinstance(sheet_names, list):
+        candidates.extend(str(name).strip() for name in sheet_names)
+    if title:
+        candidates.append(str(title).strip())
+    for candidate in candidates:
+        if not candidate or GENERIC_SHEET_RE.match(candidate):
+            continue
+        if not any(ch.isalpha() for ch in candidate):
+            continue
+        return candidate[:60]
+    return ""
+
+
+def _table_period(text: str) -> str:
+    """Период, который охватывает таблица.
+
+    Период указывается, только когда дат действительно много и они разнесены
+    во времени: у обычной таблицы с парой дат отбирать дату документа не за что.
+    """
+    values = sorted(
+        {
+            str(candidate.value)[:10]
+            for candidate in extract_dates(text)
+            if len(str(candidate.value)) >= 10 and str(candidate.value)[:4].isdigit()
+        }
+    )
+    if len(values) < 4:
+        return ""
+    first, last = values[0], values[-1]
+    if first[:7] == last[:7]:
+        return ""
+    return first[:4] if first[:4] == last[:4] else f"{first[:4]}-{last[:4]}"
+
+
+def _folder_period(children: list[FileAnalysis]) -> str:
+    """Период, к которому относится содержимое папки.
+
+    Одна дата, если все документы одного дня; иначе диапазон годов.
+    """
+    dates = sorted(
+        str(child.document_date.value)[:10]
+        for child in children
+        if child.document_date is not None and child.document_date.accepted
+    )
+    dates = [value for value in dates if len(value) == 10 and value[:4].isdigit()]
+    if not dates:
+        return ""
+    if dates[0] == dates[-1]:
+        return dates[0]
+    first, last = dates[0][:4], dates[-1][:4]
+    return first if first == last else f"{first}-{last}"
 
 
 def _media_stamp(iso_value: str, *, with_time: bool = True) -> str:

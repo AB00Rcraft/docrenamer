@@ -36,6 +36,7 @@
     "allow_filesystem_date_fallback": true,
     "preserve_good_names": true,
     "include_capture_time": true,
+    "rename_folders": true,
     "date_format": "DD.MM.YYYY",
     "order": "type-first",
     "max_segments": 3

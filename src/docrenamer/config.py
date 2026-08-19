@@ -135,6 +135,8 @@ class NamingConfig:
     #: Добавлять время в имя фотографий, видео и аудиозаписей. Время берётся
     #: только из метаданных съёмки: у документов и у снимков без EXIF его нет.
     include_capture_time: bool = True
+    #: Предлагать имена и для вложенных папок.
+    rename_folders: bool = True
     date_format: str = "DD.MM.YYYY"
     order: str = "type-first"
     max_segments: int = 3
@@ -187,6 +189,8 @@ class NamingConfig:
             cfg.order = value
         if "max_segments" in data:
             cfg.max_segments = _as_int(data["max_segments"], "naming.max_segments", 2, 8)
+        if "rename_folders" in data:
+            cfg.rename_folders = _as_bool(data["rename_folders"], "naming.rename_folders")
         if "include_capture_time" in data:
             cfg.include_capture_time = _as_bool(
                 data["include_capture_time"], "naming.include_capture_time"

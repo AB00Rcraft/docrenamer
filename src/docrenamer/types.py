@@ -151,6 +151,7 @@ class Category(StrEnum):
     ARCHIVE = "archive"
     GEODATA = "geodata"
     DATA = "data"
+    FOLDER = "folder"
     OTHER = "other"
 
 
@@ -377,6 +378,13 @@ class PlanItem:
     selected: bool = True
     status: str = Status.OK.value
     message: str = ""
+    #: «file» или «folder».
+    kind: str = "file"
+
+    @property
+    def is_folder(self) -> bool:
+        """Строка плана описывает папку, а не файл."""
+        return self.kind == "folder"
 
     @property
     def is_rename(self) -> bool:
@@ -390,6 +398,7 @@ class PlanItem:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "kind": self.kind,
             "source_path": str(self.source_path),
             "target_path": str(self.target_path),
             "original_filename": self.source_path.name,
@@ -423,9 +432,13 @@ class RenameRecord:
     status: str
     timestamp: str
     message: str = ""
+    #: «file» или «folder». Папка не имеет контрольной суммы, и откат для неё
+    #: проверяется иначе.
+    kind: str = "file"
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "kind": self.kind,
             "source_path": str(self.source_path),
             "target_path": str(self.target_path),
             "original_filename": self.original_filename,

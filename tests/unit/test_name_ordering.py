@@ -120,7 +120,9 @@ def test_person_comes_before_organization(
 
     name = preview_names(config, app_paths, workdir)["scan0007.txt"]
 
-    assert "Иванов_" in name
+    # Полное ФИО в имени сокращается до фамилии с инициалами.
+    assert "ИвановИИ_" in name
+    assert name.index("ИвановИИ") < name.index("Альфа"), name
 
 
 def test_one_authority_is_enough(config: Config, app_paths: AppPaths, workdir: Path) -> None:

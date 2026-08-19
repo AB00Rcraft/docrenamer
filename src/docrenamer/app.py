@@ -17,8 +17,13 @@ from docrenamer.analysis import Analyzer, build_analyzer
 from docrenamer.config import Config, load_config, write_json_atomic
 from docrenamer.logging.manifest import ManifestWriter, new_manifest_path
 from docrenamer.logging.text_log import TextLog, new_log_path
-from docrenamer.operations.planner import RenamePlan, build_plan, verify_plan_item
-from docrenamer.operations.rename import CriticalSafetyError, rename_file
+from docrenamer.operations.planner import (
+    RenamePlan,
+    build_folder_items,
+    build_plan,
+    verify_plan_item,
+)
+from docrenamer.operations.rename import CriticalSafetyError, rename_directory, rename_file
 from docrenamer.operations.undo import UndoReport, undo_session
 from docrenamer.paths import AppPaths, default_paths, new_session_id
 from docrenamer.scanner import Scanner, ScanStats
@@ -87,6 +92,8 @@ class Application:
         self.temp = SessionTemp(self.paths, self.session_id)
         self._analyzer = analyzer
         self.last_scan_stats: ScanStats | None = None
+        #: Подкаталоги последнего сканирования — их тоже можно переименовать.
+        self.last_folders: list[Path] = []
 
     # --- служебное ---------------------------------------------------------
 
@@ -131,6 +138,7 @@ class Application:
         )
         files = list(scanner.scan(Path(directory)))
         self.last_scan_stats = scanner.stats
+        self.last_folders = list(scanner.folders)
         self.log_line(f"Найдено файлов: {len(files)}")
         self.log_line(scanner.stats.summary_ru())
         return files
@@ -177,6 +185,16 @@ class Application:
             app_version=__version__,
             progress=lambda done, total: self.progress(done, total, "PLAN"),
         )
+        if self.config.naming.rename_folders and self.last_folders:
+            folder_analyses = [
+                self.analyzer.analyze_folder(folder, analyses)
+                # Самые глубокие папки идут первыми: переименование родителя
+                # делает пути внутри недействительными.
+                for folder in sorted(
+                    self.last_folders, key=lambda p: len(p.parts), reverse=True
+                )
+            ]
+            plan.items.extend(build_folder_items(folder_analyses, config=self.config))
         if save_plan_to:
             plan.save(Path(save_plan_to))
         for key, value in plan.counters().items():
@@ -186,7 +204,12 @@ class Application:
     def apply(self, plan: RenamePlan, *, write_log: bool = True) -> ApplyReport:
         """Исполнить утверждённый план (разделы 48, 51 ТЗ)."""
         report = ApplyReport()
-        items = [item for item in plan.items if item.selected and item.is_rename]
+        # Файлы переименовываются раньше папок: иначе пути внутри
+        # переименованной папки перестают совпадать с планом.
+        items = sorted(
+            (item for item in plan.items if item.selected and item.is_rename),
+            key=lambda item: (item.is_folder, -len(item.source_path.parts)),
+        )
         report.total = len(items)
         report.low_confidence = sum(
             1 for i in plan.items if i.status == Status.SKIPPED_LOW_CONFIDENCE.value
@@ -246,15 +269,18 @@ class Application:
                     continue
 
                 try:
-                    outcome = rename_file(
-                        item.source_path,
-                        item.target_path,
-                        expected_size=item.size,
-                        expected_mtime=item.mtime,
-                        expected_sha256=item.sha256,
-                        detected_type=item.analysis.detected_type if item.analysis else "",
-                        confidence=item.confidence,
-                    )
+                    if item.is_folder:
+                        outcome = rename_directory(item.source_path, item.target_path)
+                    else:
+                        outcome = rename_file(
+                            item.source_path,
+                            item.target_path,
+                            expected_size=item.size,
+                            expected_mtime=item.mtime,
+                            expected_sha256=item.sha256,
+                            detected_type=item.analysis.detected_type if item.analysis else "",
+                            confidence=item.confidence,
+                        )
                 except CriticalSafetyError as exc:
                     report.critical = str(exc)
                     report.failed += 1

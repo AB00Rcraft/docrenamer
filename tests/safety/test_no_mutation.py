@@ -100,7 +100,11 @@ def test_no_file_leaves_its_directory(
     plan = app.preview(corpus)
     app.apply(plan)
 
-    assert len(list(nested.iterdir())) == 1
+    # Вложенная папка могла получить новое имя, но осталась на месте, и файл
+    # по-прежнему лежит внутри неё.
+    subdirectories = [path for path in corpus.iterdir() if path.is_dir()]
+    assert len(subdirectories) == 1
+    assert len(list(subdirectories[0].iterdir())) == 1
     assert {p.name for p in tmp_path.iterdir()} == outside_before
 
 

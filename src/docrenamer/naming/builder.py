@@ -294,8 +294,10 @@ def format_person(entity: EntityRef) -> str:
         return initials
     surname = max(parts, key=len) if len(parts) == 1 else parts[0]
     if len(parts) >= 3 and all(len(p) > 2 for p in parts[:3]):
-        # «Иванов Иван Иванович» → «Иванов»: остальное хранится в manifest.
+        # «Иванов Иван Иванович» → «ИвановИИ»: фамилии с инициалами достаточно,
+        # чтобы узнать человека, а полное ФИО сохраняется в manifest.
         surname = parts[0]
+        initials = initials or f"{parts[1][0]}{parts[2][0]}"
     elif len(parts) == 2 and len(parts[1]) <= 4 and "." in parts[1]:
         initials = initials or parts[1].replace(".", "")
         surname = parts[0]
@@ -364,6 +366,10 @@ def _document_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     """Сегменты для документов: DATE__TYPE__SUBJECT__ENTITIES__IDENTIFIER."""
     segments: list[Segment] = []
     date_value = _date_value(analysis, config)
+    if not date_value:
+        # Таблица живёт не одним днём: у реестра или ведомости в имени стоит
+        # период, а не случайная дата из ячейки.
+        date_value = str((analysis.metadata or {}).get("period") or "")
     if date_value:
         segments.append(Segment(date_value, PRIORITY_DATE, droppable=False, kind="date"))
 
@@ -469,7 +475,7 @@ def _media_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     if type_value:
         segments.append(Segment(type_value, PRIORITY_TYPE, kind="type"))
 
-    if config.media.include_device:
+    if config.media.include_device and not meta.get("photo_of_document"):
         device = str(meta.get("device") or "")
         if device:
             segments.append(Segment(device, PRIORITY_DEVICE, kind="device"))
@@ -486,6 +492,19 @@ def _media_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     subject_value = _value(analysis.subject)
     if subject_value:
         segments.append(Segment(subject_value, PRIORITY_SUBJECT, kind="subject"))
+
+    if (analysis.metadata or {}).get("photo_of_document"):
+        # Понятно, что это снимок, а не сам документ.
+        segments.append(Segment("фото", PRIORITY_ORIGINAL, kind="media_hint"))
+        identifier = _value(analysis.document_number)
+        if identifier:
+            segments.append(
+                Segment(identifier, PRIORITY_IDENTIFIER, droppable=False, kind="identifier")
+            )
+        entities = _entities_segment(analysis.main_persons, analysis.main_organizations, config)
+        if entities:
+            segments.append(Segment(entities, PRIORITY_ENTITY, kind="entities"))
+        return segments
 
     original = clean_original_stem(analysis.source_path.stem)
     if original:
@@ -528,6 +547,36 @@ def _archive_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     return segments
 
 
+def _folder_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
+    """Сегменты имени папки: вид, участники, номер дела, период, число файлов."""
+    segments: list[Segment] = []
+    metadata = analysis.metadata or {}
+
+    type_value = _value(analysis.document_type)
+    if type_value:
+        segments.append(Segment(type_value, PRIORITY_TYPE, droppable=False, kind="type"))
+
+    entities = _entities_segment(analysis.main_persons, analysis.main_organizations, config)
+    if entities:
+        segments.append(Segment(entities, PRIORITY_ENTITY, kind="entities"))
+
+    if analysis.case_numbers:
+        identifier = _value(analysis.case_numbers[0])
+        if identifier:
+            segments.append(
+                Segment(identifier, PRIORITY_IDENTIFIER, droppable=False, kind="identifier")
+            )
+
+    period = str(metadata.get("period") or "")
+    if period:
+        segments.append(Segment(period, PRIORITY_DATE, droppable=False, kind="date"))
+
+    count = metadata.get("files_inside")
+    if isinstance(count, int) and count > 1:
+        segments.append(Segment(f"{count}_файлов", PRIORITY_SUBJECT, kind="count"))
+    return segments
+
+
 def _geodata_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     """Сегменты для треков и карт (раздел 24 ТЗ)."""
     segments: list[Segment] = []
@@ -557,6 +606,14 @@ def _geodata_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     return segments
 
 
+def _scan_page_segment(analysis: FileAnalysis) -> Segment | None:
+    """Номер страницы в пачке сканов."""
+    page = (analysis.metadata or {}).get("scan_page")
+    if not isinstance(page, dict) or not page.get("segment"):
+        return None
+    return Segment(str(page["segment"]), PRIORITY_IDENTIFIER, droppable=False, kind="series")
+
+
 def _series_segment(analysis: FileAnalysis) -> Segment | None:
     """Номер тома или части — он не должен потеряться при переименовании."""
     series = (analysis.metadata or {}).get("series")
@@ -573,11 +630,13 @@ def build_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
         segments = _email_segments(analysis, config)
     elif analysis.category is Category.ARCHIVE:
         segments = _archive_segments(analysis, config)
+    elif analysis.category is Category.FOLDER:
+        segments = _folder_segments(analysis, config)
     elif analysis.category is Category.GEODATA:
         segments = _geodata_segments(analysis, config)
     else:
         segments = _document_segments(analysis, config)
-    part = _series_segment(analysis)
+    part = _series_segment(analysis) or _scan_page_segment(analysis)
     if part is not None:
         segments.append(part)
     return segments
@@ -597,8 +656,12 @@ def _order_segments(segments: list[Segment], config: Config) -> list[Segment]:
     # Вид документа — первое слово имени: именно его человек ищет глазами.
     type_kinds = ("type", "type_default", "type_from_name")
     types = [s for s in rest if s.kind in type_kinds]
-    others = [s for s in rest if s.kind not in type_kinds]
-    rest = types + others
+    # Хвост имени: сначала пометка «фото», затем номер страницы. Так имя
+    # начинается с сути, а сортировка по имени идёт по порядку страниц.
+    tail_kinds = ("media_hint", "series")
+    tail = [s for s in rest if s.kind in tail_kinds]
+    others = [s for s in rest if s.kind not in type_kinds and s.kind not in tail_kinds]
+    rest = types + others + sorted(tail, key=lambda s: tail_kinds.index(s.kind))
     return rest + dates if rest else segments
 
 
@@ -610,7 +673,9 @@ def _limit_segments(segments: list[Segment], config: Config) -> list[Segment]:
     полезны.
     """
     limit = max(2, config.naming.max_segments)
-    core = [s for s in segments if s.kind not in ("date", "datetime", "series")]
+    core = [
+        s for s in segments if s.kind not in ("date", "datetime", "series", "media_hint")
+    ]
     if len(core) <= limit:
         return segments
     keep = sorted(
@@ -625,16 +690,47 @@ def _dedupe_segments(segments: list[Segment]) -> list[Segment]:
 
     Иначе имя вида ``Постановление__Постановление`` получается из совпадения
     типа документа и его же заголовка в свойствах файла.
+
+    Длинный сегмент, начинающийся с уже сказанного слова, целиком не
+    выбрасывается: из «Бюджет проекта Север» при типе «Бюджет» остаётся
+    «проекта Север», и имя сохраняет то, чем эта таблица отличается от
+    соседних.
     """
     result: list[Segment] = []
     seen: list[str] = []
     for segment in segments:
         key = dedupe_key(segment.text)
-        if any(key == other or key in other or other in key for other in seen if other):
+        if any(key == other or key in other for other in seen if other):
             continue
+        covering = [other for other in seen if other and other in key]
+        if covering:
+            trimmed = _drop_repeated_words(segment.text, covering)
+            trimmed_key = dedupe_key(trimmed)
+            if len(trimmed_key) < 3 or any(
+                trimmed_key == other or trimmed_key in other for other in seen if other
+            ):
+                continue
+            segment = Segment(
+                text=trimmed,
+                priority=segment.priority,
+                droppable=segment.droppable,
+                kind=segment.kind,
+            )
+            key = trimmed_key
         seen.append(key)
         result.append(segment)
     return result
+
+
+def _drop_repeated_words(text: str, covered: list[str]) -> str:
+    """Убрать из текста слова, уже сказанные другими сегментами."""
+    words = []
+    for word in re.split(r"[\s_]+", text):
+        word_key = dedupe_key(word)
+        if not word or (word_key and any(word_key in other for other in covered)):
+            continue
+        words.append(word)
+    return " ".join(words).strip()
 
 
 def build_filename(analysis: FileAnalysis, config: Config) -> tuple[str, list[str]]:

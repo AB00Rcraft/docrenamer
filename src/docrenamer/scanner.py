@@ -63,6 +63,7 @@ class ScanStats:
     """Статистика обхода для GUI и логов."""
 
     directories: int = 0
+    folders_found: int = 0
     files_found: int = 0
     files_skipped: int = 0
     symlinks_skipped: int = 0
@@ -124,6 +125,8 @@ class Scanner:
         self.patterns = IGNORE_PATTERNS + EXTRA_IGNORE_PATTERNS + tuple(extra_ignores)
         self.follow_symlinks = follow_symlinks
         self.stats = ScanStats()
+        #: Найденные подкаталоги — их тоже можно переименовать.
+        self.folders: list[Path] = []
         self._visited: set[tuple[int, int]] = set()
         self._own_paths: set[Path] = set()
 
@@ -180,6 +183,7 @@ class Scanner:
             raise NotADirectoryError(f"Каталог не найден: {root}")
         root_resolved = root.resolve()
         self.stats = ScanStats()
+        self.folders = []
         self._visited = set()
         self._resolve_own_paths()
         yield from self._walk(root_resolved, root_resolved)
@@ -233,8 +237,11 @@ class Scanner:
                     continue
 
             if is_dir:
-                if self.recursive and not self._is_own_path(path):
-                    subdirectories.append(path)
+                if not self._is_own_path(path):
+                    self.folders.append(path)
+                    self.stats.folders_found += 1
+                    if self.recursive:
+                        subdirectories.append(path)
                 continue
 
             if not is_file:
@@ -276,3 +283,15 @@ def scan_directory(
     scanner = Scanner(recursive=recursive, paths=paths)
     files = list(scanner.scan(Path(directory)))
     return files, scanner.stats
+
+
+def scan_folders(
+    directory: Path,
+    *,
+    recursive: bool = True,
+    paths: AppPaths | None = None,
+) -> list[Path]:
+    """Подкаталоги выбранной папки — их тоже можно переименовать."""
+    scanner = Scanner(recursive=recursive, paths=paths)
+    list(scanner.scan(Path(directory)))
+    return list(scanner.folders)

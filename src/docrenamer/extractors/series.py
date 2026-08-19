@@ -124,3 +124,85 @@ def detect_series(paths: Iterable[Path]) -> dict[Path, SeriesInfo]:
                 label=label,
             )
     return result
+
+
+#: Имя скана: общая часть плюс номер в конце — «IMG_5608», «scan001», «doc-12».
+SCAN_NAME_RE = re.compile(r"^(?P<prefix>.*?)(?P<num>\d{1,6})$")
+
+#: Насколько далеко могут отстоять номера соседних страниц. Один-два пропуска
+#: — это обычное дело: неудачный кадр удалили, а порядок остался прежним.
+MAX_SCAN_GAP = 3
+
+
+@dataclass(frozen=True, slots=True)
+class ScanPage:
+    """Место файла в подряд отснятой пачке страниц."""
+
+    prefix: str
+    number: int
+    page: int
+    total: int
+
+    @property
+    def segment(self) -> str:
+        """Обозначение страницы в имени.
+
+        Номер дополняется нулями до ширины последнего: тогда сортировка по
+        имени совпадает с порядком страниц и «стр_10» не встаёт перед «стр_2».
+        """
+        width = len(str(self.total))
+        return f"стр_{self.page:0{width}d}"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "prefix": self.prefix,
+            "number": self.number,
+            "page": self.page,
+            "total": self.total,
+            "segment": self.segment,
+        }
+
+
+def detect_scan_pages(paths: Iterable[Path]) -> dict[Path, ScanPage]:
+    """Найти пачки сканов: подряд пронумерованные файлы одного каталога.
+
+    Фотографии документа снимают одну за другой, поэтому номера камеры идут
+    подряд: ``IMG_5608``, ``IMG_5609``, ``IMG_5610``. Сам номер ничего не
+    значит — важен порядок, поэтому страницы нумеруются заново, с первой.
+
+    Одного имени мало, чтобы объявить файлы страницами документа: подряд
+    снятые кадры отпуска выглядят точно так же. Решение принимается выше, по
+    содержимому файлов.
+    """
+    groups: dict[tuple[Path, str, str, int], list[tuple[int, Path]]] = {}
+    for path in paths:
+        match = SCAN_NAME_RE.match(path.stem.strip())
+        if match is None:
+            continue
+        digits = match.group("num")
+        prefix = match.group("prefix")
+        # Ширина номера — часть образца: «01» и «1» нумеровали по-разному.
+        key = (path.parent, path.suffix.lower(), comparison_key(prefix), len(digits))
+        groups.setdefault(key, []).append((int(digits), path))
+
+    result: dict[Path, ScanPage] = {}
+    for (_parent, _suffix, _prefix_key, _width), members in groups.items():
+        members.sort()
+        runs: list[list[tuple[int, Path]]] = [[members[0]]]
+        for number, path in members[1:]:
+            if number - runs[-1][-1][0] <= MAX_SCAN_GAP:
+                runs[-1].append((number, path))
+            else:
+                runs.append([(number, path)])
+        for run in runs:
+            if len(run) < 2:
+                continue
+            prefix = SCAN_NAME_RE.match(run[0][1].stem.strip())
+            for page, (number, path) in enumerate(run, start=1):
+                result[path] = ScanPage(
+                    prefix=prefix.group("prefix") if prefix else "",
+                    number=number,
+                    page=page,
+                    total=len(run),
+                )
+    return result

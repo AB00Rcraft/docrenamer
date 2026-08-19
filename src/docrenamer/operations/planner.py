@@ -121,6 +121,73 @@ def _mark_related(analysis: FileAnalysis, groups: dict[Path, set[str]]) -> str:
     return ""
 
 
+def build_folder_items(
+    folders: Iterable[FileAnalysis],
+    *,
+    config: Config,
+    taken_by_directory: dict[Path, set[str]] | None = None,
+) -> list[PlanItem]:
+    """Строки плана для папок.
+
+    Папки идут после файлов: если сначала переименовать папку, пути файлов
+    внутри неё станут недействительными, а откат — ненадёжным.
+    """
+    taken = taken_by_directory if taken_by_directory is not None else {}
+    items: list[PlanItem] = []
+    threshold = config.naming.confidence_threshold
+
+    for analysis in folders:
+        folder = analysis.source_path
+        proposed = analysis.proposed_filename.strip()
+        item = PlanItem(
+            source_path=folder,
+            target_path=folder,
+            proposed_filename=proposed or folder.name,
+            sha256="",
+            size=0,
+            mtime=0.0,
+            confidence=analysis.overall_confidence,
+            analysis=analysis,
+            statuses=list(analysis.statuses),
+            selected=False,
+            status=Status.SKIPPED.value,
+            kind="folder",
+        )
+        if not proposed:
+            item.status = Status.NO_NAME_PROPOSED.value
+            item.message = "Содержимое папки не даёт названия."
+            items.append(item)
+            continue
+
+        directory_taken = taken.setdefault(folder.parent, set())
+        target, collided = resolve_collision(
+            folder.parent / proposed,
+            taken=directory_taken,
+            source=folder,
+            separator=config.naming.separator,
+            max_length=config.naming.max_filename_length,
+        )
+        item.target_path = target
+        item.proposed_filename = target.name
+        if collided:
+            item.add_status(Status.NAME_COLLISION_RESOLVED.value)
+        if target.name == folder.name:
+            item.status = Status.NAME_UNCHANGED.value
+            item.message = "Имя папки уже соответствует предложенному."
+        elif analysis.overall_confidence < threshold:
+            item.status = Status.SKIPPED_LOW_CONFIDENCE.value
+            item.message = (
+                f"Уверенность {analysis.overall_confidence:.2f} ниже порога "
+                f"{threshold:.2f} — папка автоматически не переименовывается."
+            )
+        else:
+            item.status = Status.OK.value
+            item.selected = True
+        directory_taken.add(fold(target.name))
+        items.append(item)
+    return items
+
+
 def build_plan(
     analyses: Iterable[FileAnalysis],
     *,
@@ -287,6 +354,12 @@ def build_plan(
 def verify_plan_item(item: PlanItem) -> tuple[bool, str, str]:
     """Повторная проверка строки плана перед APPLY (раздел 49 ТЗ)."""
     source = item.source_path
+    if item.is_folder:
+        # У папки нет содержимого для сверки, а время изменения меняется от
+        # переименования файлов внутри. Проверяем, что она на месте.
+        if not source.is_dir():
+            return False, Status.SOURCE_CHANGED_AFTER_PREVIEW.value, "Папка не найдена."
+        return True, Status.OK.value, ""
     try:
         stat = source.stat()
     except OSError as exc:

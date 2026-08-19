@@ -130,6 +130,120 @@ def _rename_no_clobber(source: Path, target: Path) -> str:
     return "link+unlink"
 
 
+def rename_directory(
+    source: Path,
+    target: Path,
+    *,
+    max_name_length: int = 240,
+) -> RenameOutcome:
+    """Переименовать папку.
+
+    У папки нет содержимого, которое можно сверить контрольной суммой, поэтому
+    целостность проверяется иначе: до и после операции сравнивается состав —
+    имена элементов первого уровня. Сама папка не перемещается и не удаляется,
+    её содержимое не трогается.
+    """
+    source = Path(source)
+    target = Path(target)
+
+    if source == target:
+        return RenameOutcome(
+            ok=False,
+            status=Status.NAME_UNCHANGED.value,
+            message="Имя не изменилось.",
+            target_path=target,
+        )
+    if not source.is_dir() or source.is_symlink():
+        return RenameOutcome(
+            ok=False,
+            status=Status.UNSAFE_PATH.value,
+            message=f"Это не папка: {source}",
+            target_path=target,
+        )
+
+    check = safety.check_same_directory(source, target)
+    if not check.ok:
+        return RenameOutcome(
+            ok=False, status=check.status, message=check.message, target_path=target
+        )
+    for control in (
+        safety.check_target_name(target, max_name_length),
+        safety.check_path_length(target),
+        safety.check_directory_writable(target.parent),
+        safety.check_target_free(target),
+    ):
+        if not control.ok:
+            return RenameOutcome(
+                ok=False, status=control.status, message=control.message, target_path=target
+            )
+
+    try:
+        before = sorted(entry.name for entry in source.iterdir())
+    except OSError as exc:
+        return RenameOutcome(
+            ok=False,
+            status=Status.READ_ERROR.value,
+            message=f"Папка недоступна: {exc}",
+            target_path=target,
+        )
+
+    try:
+        method = _rename_no_clobber(source, target)
+    except FileExistsError:
+        return RenameOutcome(
+            ok=False,
+            status=Status.NAME_COLLISION_RESOLVED.value,
+            message=f"Целевое имя оказалось занято: {target.name}",
+            target_path=target,
+        )
+    except PermissionError as exc:
+        return RenameOutcome(
+            ok=False,
+            status=Status.ACCESS_DENIED.value,
+            message=f"Нет прав на переименование папки: {exc}",
+            target_path=target,
+        )
+    except OSError as exc:
+        return RenameOutcome(
+            ok=False,
+            status=Status.READ_ERROR.value,
+            message=f"Папка не переименована: {exc}",
+            target_path=target,
+        )
+
+    if not target.is_dir():
+        raise CriticalSafetyError(f"После переименования папка отсутствует: {target}")
+    after = sorted(entry.name for entry in target.iterdir())
+    if after != before:
+        raise CriticalSafetyError(
+            f"Состав папки изменился при переименовании: {source.name} → {target.name}"
+        )
+
+    record = RenameRecord(
+        source_path=source,
+        target_path=target,
+        original_filename=source.name,
+        new_filename=target.name,
+        sha256_before="",
+        sha256_after="",
+        size=len(before),
+        mtime=0.0,
+        detected_type="folder",
+        confidence=0.0,
+        status=Status.RENAMED.value,
+        timestamp=utcstamp(),
+        message=f"method={method}, элементов: {len(before)}",
+        kind="folder",
+    )
+    return RenameOutcome(
+        ok=True,
+        status=Status.RENAMED.value,
+        record=record,
+        target_path=target,
+        method=method,
+    )
+
+
 def rename_file(
     source: Path,
     target: Path,

@@ -21,6 +21,12 @@ FULL_NAME_RE = re.compile(
     rf"([{_UP}][{_LOW}]*(?:ович|евич|ьевич|овна|евна|ьевна|ична|инична|оглы|кызы)\w*)"
 )
 
+#: «ИВАНОВ ИВАН ИВАНОВИЧ» — так печатают в паспортах и так распознаёт OCR.
+UPPERCASE_NAME_RE = re.compile(
+    rf"\b([{_UP}]{{2,}})\s+([{_UP}]{{2,}})\s+"
+    rf"([{_UP}]*(?:ОВИЧ|ЕВИЧ|ЬЕВИЧ|ОВНА|ЕВНА|ЬЕВНА|ИЧНА|ИНИЧНА|ОГЛЫ|КЫЗЫ))\b"
+)
+
 #: «Иванов И.И.» и «Иванов И. И.»
 SURNAME_INITIALS_RE = re.compile(
     rf"\b([{_UP}][{_LOW}]+(?:-[{_UP}][{_LOW}]+)?)\s+([{_UP}])\.\s?([{_UP}])?\.?"
@@ -142,6 +148,14 @@ def extract_persons(text: str) -> list[Candidate]:
         if surname.casefold() in STOPWORDS:
             continue
         add(f"{surname} {name} {patronymic}", match.start(), match.end(), 0.9, "full")
+
+    for match in UPPERCASE_NAME_RE.finditer(text):
+        surname, name, patronymic = match.groups()
+        if surname.casefold() in STOPWORDS:
+            continue
+        # Отображаем как принято: «Иванов Иван Иванович», а не прописными.
+        display = " ".join(part.capitalize() for part in (surname, name, patronymic))
+        add(display, match.start(), match.end(), 0.88, "uppercase")
 
     consumed = {c.position for c in found.values()}
     for match in SURNAME_INITIALS_RE.finditer(text):

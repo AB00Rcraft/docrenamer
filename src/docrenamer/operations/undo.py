@@ -14,7 +14,12 @@ from typing import Any
 from docrenamer.logging.manifest import ManifestWriter, load_manifest, new_manifest_path
 from docrenamer.logging.text_log import TextLog, new_log_path
 from docrenamer.operations.hashing import HashError, sha256_file
-from docrenamer.operations.rename import CriticalSafetyError, RenameOutcome, rename_file
+from docrenamer.operations.rename import (
+    CriticalSafetyError,
+    RenameOutcome,
+    rename_directory,
+    rename_file,
+)
 from docrenamer.paths import AppPaths, default_paths, new_session_id
 from docrenamer.types import RenameRecord, Status, utcstamp
 
@@ -50,13 +55,28 @@ def _validate(record: dict[str, Any]) -> tuple[bool, str, str]:
     """
     current = Path(record.get("target_path", ""))
     original = Path(record.get("source_path", ""))
+    is_folder = record.get("kind") == "folder"
 
     if not str(current) or not str(original):
         return False, Status.SKIPPED.value, "Неполная запись manifest."
     if record.get("status") != Status.RENAMED.value:
         return False, Status.SKIPPED.value, "Запись не является выполненным переименованием."
     if not current.exists():
-        return False, Status.SKIPPED.value, f"Файл не найден: {current}"
+        return False, Status.SKIPPED.value, f"Не найдено: {current}"
+    if is_folder:
+        # У папки нет контрольной суммы: проверяем только то, что она на месте,
+        # прежнее имя свободно и она не покидает свой каталог.
+        if not current.is_dir():
+            return False, Status.UNSAFE_PATH.value, f"Это не папка: {current}"
+        if current.parent != original.parent:
+            return False, Status.UNSAFE_PATH.value, "Откат между каталогами запрещён."
+        if original.exists():
+            return (
+                False,
+                Status.UNDO_TARGET_EXISTS.value,
+                f"Прежнее имя папки занято: {original.name}",
+            )
+        return True, Status.OK.value, ""
     if current.is_dir():
         return False, Status.UNSAFE_PATH.value, f"Это каталог: {current}"
     if current.parent != original.parent:
@@ -93,6 +113,9 @@ def undo_record(record: dict[str, Any]) -> RenameOutcome:
     original = Path(record.get("source_path", ""))
     if not allowed:
         return RenameOutcome(ok=False, status=status, message=message, target_path=original)
+
+    if record.get("kind") == "folder":
+        return rename_directory(current, original)
 
     expected = str(record.get("sha256_after") or record.get("sha256_before") or "")
     return rename_file(
