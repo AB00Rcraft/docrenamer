@@ -373,7 +373,10 @@ class Pipeline:
                 if analysis is None:
                     continue
                 analysis.metadata["scan_page"] = page.to_dict()
-                analysis.metadata["photo_of_document"] = True
+                if analysis.category is Category.IMAGE:
+                    # Пометка «фото» уместна только для снимка: у PDF и без неё
+                    # понятно, что это скан.
+                    analysis.metadata["photo_of_document"] = True
                 analysis.add_status(Status.SERIES_PART_DETECTED)
                 self.finalize(analysis)
 
