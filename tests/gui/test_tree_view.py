@@ -184,3 +184,46 @@ def test_selecting_row_fills_card(gui, workdir: Path) -> None:  # type: ignore[n
     card = gui.details.get("1.0", "end")
     assert "скан.pdf" in card
     assert "Иск_12.05.2026.pdf" in card
+
+
+def test_merge_dialog_selects_pages(gui, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    """Окно объединения показывает файлы и возвращает отмеченные мышью."""
+    from docrenamer.gui import MergeDialog
+
+    items = []
+    for number in range(1, 4):
+        path = workdir / f"скан {number}.jpg"
+        path.write_bytes(b"\xff\xd8\xff\xe0")
+        items.append(make_item(path, path.name))
+
+    dialog = MergeDialog(gui.root, items, suggestion="Иск Шахмановой")
+    try:
+        assert dialog.listbox.size() == 3
+        # По умолчанию отмечены все: обычно объединяют всю пачку.
+        assert len(dialog.selected_items()) == 3
+        dialog.listbox.selection_clear(0, "end")
+        dialog.listbox.selection_set(0, 1)
+        assert [item.source_path.name for item in dialog.selected_items()] == [
+            "скан 1.jpg",
+            "скан 2.jpg",
+        ]
+        assert dialog.name_var.get() == "Иск Шахмановой"
+    finally:
+        dialog.window.destroy()
+
+
+def test_progress_draws_from_the_middle(gui) -> None:  # type: ignore[no-untyped-def]
+    """Полоса хода работы растёт от середины окна в обе стороны."""
+    gui.progress.canvas.configure(width=200)
+    gui.progress.canvas.update_idletasks()
+
+    gui.progress.set(1, 2)
+    drawn = gui.progress.canvas.find_all()
+
+    assert drawn, "полоса не нарисована"
+    left, _top, right, _bottom = gui.progress.canvas.coords(drawn[0])
+    middle = gui.progress.canvas.winfo_width() / 2
+    assert abs((middle - left) - (right - middle)) < 1.0
+
+    gui.progress.clear()
+    assert not gui.progress.canvas.find_all()
