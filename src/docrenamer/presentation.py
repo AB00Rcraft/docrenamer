@@ -35,11 +35,15 @@ ERROR_STATUSES = frozenset(
 )
 
 
-def format_plan_row(item: PlanItem) -> tuple[str, str, str, str]:
-    """Значения строки предпросмотра: имя, предложение, уверенность, состояние."""
-    mark = "☑" if item.selected else "☐"
+def format_plan_row(item: PlanItem) -> tuple[str, str, str, str, str]:
+    """Значения строки предпросмотра.
+
+    Галочка вынесена в отдельную колонку: по ней удобно попасть щелчком, и
+    отклик получается сразу, без выделения строки и двойных нажатий.
+    """
     return (
-        f"{mark} {item.source_path.name}",
+        "☑" if item.selected else "☐",
+        item.source_path.name,
         item.proposed_filename if item.is_rename else "—",
         f"{item.confidence * 100:.0f}%",
         item.status,

@@ -136,3 +136,54 @@ def test_rejects_unknown_order(config: Config) -> None:
     with pytest.raises(ConfigError) as exc:
         Config.from_dict({"naming": {"order": "random"}})
     assert "order" in str(exc.value)
+
+
+# --- вид документа всегда первым --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_prefix"),
+    [
+        (
+            "СПРАВКА об отключении газоснабжения от 15 марта 2026 года. АО «Мосгаз».",
+            "Справка_",
+        ),
+        (
+            "Предмет купли-продажи — транспортное средство. Воробьев Сергей Петрович, "
+            "Покупатель. Дата: 25 ноября 2024 года.",
+            "Договор_купли_продажи_",
+        ),
+        (
+            "СЧЕТ-ФАКТУРА № 245 от 18.08.2026, продавец ООО «Альфа»",
+            "Счет_фактура_",
+        ),
+    ],
+)
+def test_name_always_starts_with_document_kind(
+    config: Config, app_paths: AppPaths, workdir: Path, text: str, expected_prefix: str
+) -> None:
+    """Первое слово имени — вид документа, а не обрывок фразы.
+
+    Раньше «купли-продажи» вело имя, потому что составное слово через дефис
+    считалось общим словом и вид документа не подтверждался.
+    """
+    (workdir / "scan0007.txt").write_bytes(text.encode())
+
+    name = preview_names(config, app_paths, workdir)["scan0007.txt"]
+
+    assert name.startswith(expected_prefix), name
+    assert name[0].isupper()
+
+
+def test_unknown_kind_does_not_justify_renaming(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """Нейтральное «Документ» держит форму имени, но не повод его менять."""
+    (workdir / "заметки по проекту.txt").write_bytes(
+        "Обсудили сроки, смету и материалы. Договорились созвониться позже.".encode()
+    )
+
+    app = Application(config, paths=app_paths)
+    item = app.preview(workdir).items[0]
+
+    assert not item.selected

@@ -63,6 +63,10 @@ FILE_KIND_LABELS: dict[str, str] = {
     "csv": "Таблица",
 }
 
+#: Если вид документа определить не удалось, имя всё равно начинается с
+#: обозначения вида: первое слово имени — это то, что человек ищет глазами.
+DEFAULT_DOCUMENT_LABEL = "Документ"
+
 
 class Analyzer(Protocol):
     """Контракт анализатора для :class:`docrenamer.app.Application`."""
@@ -310,16 +314,20 @@ class Pipeline:
             # Вид документа не подтверждён. Лучше назвать файл нейтрально по
             # его формату, чем присвоить ему чужой юридический ярлык
             # (раздел 92 ТЗ).
-            label = FILE_KIND_LABELS.get(analysis.detected_type, "")
-            if label:
-                analysis.document_type = Field(
-                    value=label,
-                    source=Source.METADATA,
-                    evidence=f"формат файла: {analysis.detected_type}",
-                    # Вид файла определён по сигнатуре — это факт, а не догадка
-                    # о юридическом смысле документа.
-                    confidence=0.95,
-                )
+            label = FILE_KIND_LABELS.get(analysis.detected_type, DEFAULT_DOCUMENT_LABEL)
+            if label == DEFAULT_DOCUMENT_LABEL:
+                # Обозначение «Документ» держит форму имени, но само по себе
+                # ничего не сообщает: переименовывать файл только ради него
+                # не за чем.
+                analysis.metadata["document_type_default"] = True
+            analysis.document_type = Field(
+                value=label,
+                source=Source.METADATA,
+                evidence=f"формат файла: {analysis.detected_type}",
+                # Вид файла определён по сигнатуре — это факт, а не догадка
+                # о юридическом смысле документа.
+                confidence=0.95 if label != DEFAULT_DOCUMENT_LABEL else 0.8,
+            )
 
         # Имя файла — тоже источник сведений: в нём часто есть номер дела и
         # дата, особенно если файл выгружен из системы делопроизводства.

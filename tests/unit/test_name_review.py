@@ -194,3 +194,28 @@ def test_implausible_numbers_are_rejected(value: str, plausible: bool) -> None:
 
     accepted = is_plausible_number(value) and not DATE_LIKE_RE.match(value)
     assert accepted is plausible
+
+
+def test_plan_row_puts_the_mark_in_its_own_column() -> None:
+    """Отметка выбора — отдельная колонка: по ней удобно попасть щелчком."""
+    from docrenamer.presentation import format_plan_row
+    from docrenamer.types import PlanItem
+
+    item = PlanItem(
+        source_path=Path("/дело/скан.pdf"),
+        target_path=Path("/дело/Договор_17.08.2026.pdf"),
+        proposed_filename="Договор_17.08.2026.pdf",
+        sha256="0" * 64,
+        size=10,
+        mtime=0.0,
+        confidence=0.93,
+        selected=True,
+    )
+
+    row = format_plan_row(item)
+
+    assert row[0] == "☑"
+    assert row[1] == "скан.pdf"
+    assert row[2] == "Договор_17.08.2026.pdf"
+    item.selected = False
+    assert format_plan_row(item)[0] == "☐"

@@ -112,8 +112,11 @@ TOOLTIPS: dict[str, str] = {
             "Предпросмотр — показать предлагаемые имена.\n"
             "Применить — переименовать по плану.",
     "recursive": "Обрабатывать файлы и во вложенных папках.",
-    "table": "Список файлов. Пробел или двойной щелчок — включить или исключить строку.\n"
+    "table": "Список файлов. Щёлкните по галочке, чтобы включить или исключить строку.\n"
+             "Работает и пробел на выбранной строке.\n"
              "Выберите строку, чтобы увидеть полные имена ниже.",
+    "select_all": "Отметить все файлы, для которых есть предложение.\n"
+                  "Повторное нажатие снимает отметки.",
     "details": "Полные имена выбранного файла и причина решения.",
     "log": "Ход работы: что найдено, что предложено, что переименовано.",
     # Настройки
@@ -436,9 +439,21 @@ class DocRenamerGUI:
         left.rowconfigure(1, weight=1)
         workspace.add(left, weight=3)
 
-        ttk.Label(left, text="ЧТО БУДЕТ ПЕРЕИМЕНОВАНО", style="Section.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, PAD_S)
+        header_row = ttk.Frame(left)
+        header_row.grid(row=0, column=0, sticky="ew", pady=(0, PAD_S))
+        header_row.columnconfigure(0, weight=1)
+        ttk.Label(header_row, text="ЧТО БУДЕТ ПЕРЕИМЕНОВАНО", style="Section.TLabel").grid(
+            row=0, column=0, sticky="w"
         )
+        self.select_all_var = tk.StringVar(value="Выбрать все")
+        self.select_all_button = ttk.Button(
+            header_row,
+            textvariable=self.select_all_var,
+            width=BUTTON_WIDTH,
+            command=self._toggle_all,
+        )
+        self.select_all_button.grid(row=0, column=1, sticky="e")
+        Tooltip(self.select_all_button, TOOLTIPS["select_all"])
 
         table = ttk.Frame(left)
         table.grid(row=1, column=0, sticky="nsew")
@@ -447,11 +462,12 @@ class DocRenamerGUI:
 
         self.tree = ttk.Treeview(
             table,
-            columns=("current", "proposed", "confidence", "status"),
+            columns=("mark", "current", "proposed", "confidence", "status"),
             show="headings",
             selectmode="browse",
         )
         columns: tuple[tuple[str, str, int, bool, bool], ...] = (
+            ("mark", "✓", 40, True, False),
             ("current", "Текущее имя", 220, False, False),
             ("proposed", "Предлагаемое имя", 420, False, True),
             ("confidence", "Уверенность", 110, True, False),
@@ -459,7 +475,8 @@ class DocRenamerGUI:
         )
         for column, title, width, centered, stretch in columns:
             self.tree.heading(column, text=title)
-            self.tree.column(column, width=width, minwidth=90, stretch=stretch)
+            self.tree.column(column, width=width, minwidth=36 if column == "mark" else 90,
+                             stretch=stretch)
             self.tree.column(column, anchor="center" if centered else "w")
         self.tree.tag_configure("ok", foreground=COLORS["ok"])
         self.tree.tag_configure("warn", foreground=COLORS["warn"])
@@ -474,6 +491,8 @@ class DocRenamerGUI:
 
         self.tree.bind("<space>", self._toggle_selected)
         self.tree.bind("<Double-1>", self._toggle_selected)
+        # Одиночный щелчок по колонке с галочкой переключает строку сразу.
+        self.tree.bind("<Button-1>", self._on_click, add="+")
         self.tree.bind("<<TreeviewSelect>>", self._show_details)
         Tooltip(self.tree, TOOLTIPS["table"])
 
@@ -1007,6 +1026,7 @@ class DocRenamerGUI:
                 values=format_plan_row(item),
                 tags=(row_tag(item),),
             )
+        self._update_select_all_label()
         for key, value in plan.counters().items():
             self._log(f"{key}: {value}")
 
@@ -1021,20 +1041,70 @@ class DocRenamerGUI:
         self._set_details(reason)
         self._log(reason)
 
+    def _on_click(self, event: tk.Event) -> str | None:
+        """Щелчок по колонке с галочкой — сразу переключает строку."""
+        if self.plan is None:
+            return None
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return None
+        if self.tree.identify_column(event.x) != "#1":
+            return None
+        row = self.tree.identify_row(event.y)
+        if not row:
+            return None
+        self._set_row_selected(row, toggle=True)
+        return "break"
+
     def _toggle_selected(self, _event: object = None) -> str:
         """Включить или исключить строку плана (раздел 79 ТЗ)."""
         if self.plan is None:
             return "break"
         selection = self.tree.selection()
-        if not selection:
-            return "break"
-        index = int(selection[0])
-        item = self.plan.items[index]
-        if not item.is_rename:
-            return "break"
-        item.selected = not item.selected
-        self.tree.item(selection[0], values=format_plan_row(item), tags=(row_tag(item),))
+        if selection:
+            self._set_row_selected(selection[0], toggle=True)
         return "break"
+
+    def _set_row_selected(self, row: str, *, toggle: bool = False, value: bool = False) -> None:
+        """Обновить отметку строки и её вид."""
+        if self.plan is None:
+            return
+        try:
+            item = self.plan.items[int(row)]
+        except (ValueError, IndexError):
+            return
+        if not item.is_rename:
+            return
+        item.selected = (not item.selected) if toggle else value
+        self.tree.item(row, values=format_plan_row(item), tags=(row_tag(item),))
+        self._update_select_all_label()
+
+    def _toggle_all(self) -> None:
+        """Отметить или снять все строки, которые можно переименовать."""
+        if self.plan is None:
+            return
+        renameable = [
+            (str(index), item)
+            for index, item in enumerate(self.plan.items)
+            if item.is_rename
+        ]
+        if not renameable:
+            return
+        select = not all(item.selected for _, item in renameable)
+        for row, _item in renameable:
+            self._set_row_selected(row, value=select)
+        self._update_select_all_label()
+        self._log(
+            f"Отмечено файлов: {sum(1 for _, i in renameable if i.selected)} из {len(renameable)}"
+        )
+
+    def _update_select_all_label(self) -> None:
+        """Кнопка называется по тому, что она сделает при нажатии."""
+        if self.plan is None:
+            self.select_all_var.set("Выбрать все")
+            return
+        renameable = [item for item in self.plan.items if item.is_rename]
+        all_selected = bool(renameable) and all(item.selected for item in renameable)
+        self.select_all_var.set("Снять все" if all_selected else "Выбрать все")
 
     # --- восстановление и закрытие -----------------------------------------
 

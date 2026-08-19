@@ -99,7 +99,9 @@ class DocumentTypeMatcher:
                 key = comparison_key(marker)
                 if not key:
                     continue
-                is_phrase = len(marker.split()) > 1
+                # «купли-продажи» и «счёт-фактура» — составные названия, а не
+                # общие слова: их вес должен быть как у словосочетания.
+                is_phrase = len(re.split(r"[\s\-–—]+", marker.strip())) > 1
                 index = haystack.find(key)
                 if index < 0:
                     if name_key and key in name_key and is_phrase:

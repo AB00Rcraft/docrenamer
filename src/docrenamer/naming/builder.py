@@ -369,7 +369,15 @@ def _document_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
 
     type_value = _value(analysis.document_type)
     if type_value:
-        segments.append(Segment(type_value, PRIORITY_TYPE, droppable=False, kind="type"))
+        default_label = bool((analysis.metadata or {}).get("document_type_default"))
+        segments.append(
+            Segment(
+                type_value,
+                PRIORITY_TYPE,
+                droppable=False,
+                kind="type_default" if default_label else "type",
+            )
+        )
 
     subject_value = _value(analysis.subject)
     if subject_value:
@@ -575,6 +583,10 @@ def _order_segments(segments: list[Segment], config: Config) -> list[Segment]:
         return segments
     dates = [s for s in segments if s.kind in ("date", "datetime")]
     rest = [s for s in segments if s.kind not in ("date", "datetime")]
+    # Вид документа — первое слово имени: именно его человек ищет глазами.
+    types = [s for s in rest if s.kind in ("type", "type_default")]
+    others = [s for s in rest if s.kind not in ("type", "type_default")]
+    rest = types + others
     return rest + dates if rest else segments
 
 

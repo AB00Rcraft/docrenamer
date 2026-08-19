@@ -285,8 +285,10 @@ def test_gate_9_interface_shows_russian_typography(
     item = next(i for i in plan.items if i.source_path.name == name)
     row = format_plan_row(item)
 
+    # Имя файла показывается во второй колонке: первая — отметка выбора.
     for char in "№—ё«»":
-        assert char in row[0], f"символ {char} потерян в интерфейсе"
+        assert char in row[1], f"символ {char} потерян в интерфейсе"
+    assert row[0] in ("☑", "☐")
     assert str(workdir) in str(item.source_path)
 
 
