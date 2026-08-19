@@ -414,10 +414,12 @@ class Pipeline:
                 confidence=0.97,
             )
         elif self.config.naming.allow_filesystem_date_fallback:
-            # Только дата, без времени: время файла — это когда его скопировали,
-            # а не когда сделали снимок. Точность, которой у нас нет, вводит
-            # в заблуждение (раздел 65 ТЗ).
-            fallback = self._filesystem_date(analysis)
+            # Время оставляем: за один день снимков бывает много, и без времени
+            # они сливаются в одинаковые имена. Источник времени честно помечен
+            # как файловая система (раздел 65 ТЗ).
+            fallback = self._filesystem_date(
+                analysis, with_time=self.config.naming.include_capture_time
+            )
             if fallback is not None:
                 analysis.document_date = Field(
                     value=fallback.value,

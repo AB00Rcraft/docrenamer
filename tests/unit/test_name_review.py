@@ -152,3 +152,45 @@ def test_name_is_dropped_when_review_fails(
     assert item.analysis.has_status(Status.NAME_REVIEW_FAILED)
     assert item.analysis.proposed_filename == ""
     assert not item.selected
+
+
+def test_type_and_subject_do_not_repeat_each_other(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """«Договор купли-продажи» не повторяется в имени дважды.
+
+    Раньше вид документа и предмет писались по-разному — «Договор_купли_продажи»
+    и «купли-продажи», — и проверка повторов их не узнавала.
+    """
+    (workdir / "scan0007.txt").write_bytes(
+        (
+            "ДОГОВОР КУПЛИ-ПРОДАЖИ № 2 г. Москва 25 ноября 2024 года "
+            "Афанасиди И.В., Продавец, и Воробьев Сергей Петрович, Покупатель."
+        ).encode()
+    )
+
+    app = Application(config, paths=app_paths)
+    name = app.preview(workdir).items[0].proposed_filename
+
+    assert name.startswith("Договор_купли_продажи_")
+    assert name.lower().count("купли") == 1, name
+
+
+@pytest.mark.parametrize(
+    ("value", "plausible"),
+    [
+        ("2", True),
+        ("17", True),
+        ("А40-123456/2026", True),
+        ("04008-2026", True),
+        ("2.1183-2026-2124", False),
+        ("154300,50", False),
+        ("2026-08-19", False),
+    ],
+)
+def test_implausible_numbers_are_rejected(value: str, plausible: bool) -> None:
+    """Склейка нескольких чисел из текста не может быть номером документа."""
+    from docrenamer.extractors.identifiers import DATE_LIKE_RE, is_plausible_number
+
+    accepted = is_plausible_number(value) and not DATE_LIKE_RE.match(value)
+    assert accepted is plausible

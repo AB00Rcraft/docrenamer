@@ -22,7 +22,7 @@ from docrenamer import __version__
 from docrenamer.app import Application, Cancelled
 from docrenamer.config import Config, load_config
 from docrenamer.logging.manifest import find_incomplete_sessions
-from docrenamer.operations.planner import RenamePlan
+from docrenamer.operations.planner import RenamePlan, build_plan
 from docrenamer.paths import AppPaths, default_paths
 from docrenamer.presentation import format_plan_row, progress_label, row_tag
 from docrenamer.security.subprocess_safe import hidden_process_options
@@ -637,6 +637,8 @@ class DocRenamerGUI:
                     done, total, stage = payload
                     self.progress.configure(maximum=max(1, total), value=done)
                     self.status_var.set(progress_label(done, total, stage))
+                elif kind == "files":
+                    self._show_files(payload)
                 elif kind == "plan":
                     self._show_plan(payload)
                 elif kind == "plan_cleared":
@@ -717,6 +719,9 @@ class DocRenamerGUI:
 
         def work() -> None:
             files = self.app.scan(directory)
+            # Список показывается сразу: человек видит, с чем предстоит работа,
+            # ещё до разбора содержимого.
+            self.events.put(("files", files))
             self.events.put(("done", f"Найдено файлов: {len(files)}"))
 
         self._run_async(work)
@@ -728,7 +733,15 @@ class DocRenamerGUI:
         self.config.recursive = self.recursive_var.get()
 
         def work() -> None:
-            plan = self.app.preview(directory)
+            files = self.app.scan(directory)
+            self.events.put(("files", files))
+            analyses = self.app.analyze(files)
+            plan = build_plan(
+                analyses,
+                config=self.config,
+                root=directory,
+                app_version=__version__,
+            )
             self.events.put(("plan", plan))
             self.events.put(("done", "Предпросмотр готов"))
 
@@ -958,8 +971,33 @@ class DocRenamerGUI:
 
     # --- план --------------------------------------------------------------
 
+    def _show_files(self, files: list[Any]) -> None:
+        """Показать найденные файлы сразу после сканирования."""
+        self.plan = None
+        self.tree.delete(*self.tree.get_children())
+        self.tree.heading("confidence", text="Размер")
+        for index, scanned in enumerate(files):
+            size = scanned.size / 1024
+            self.tree.insert(
+                "",
+                "end",
+                iid=str(index),
+                values=(
+                    scanned.path.name,
+                    "—",
+                    f"{size:.0f} КБ" if size < 1024 else f"{size / 1024:.1f} МБ",
+                    "Найден",
+                ),
+                tags=("warn",),
+            )
+        self._set_details(
+            f"Найдено файлов: {len(files)}.\n"
+            "Нажмите «Предпросмотр», чтобы разобрать их и увидеть предлагаемые имена."
+        )
+
     def _show_plan(self, plan: RenamePlan) -> None:
         self.plan = plan
+        self.tree.heading("confidence", text="Уверенность")
         self.tree.delete(*self.tree.get_children())
         for index, item in enumerate(plan.items):
             self.tree.insert(

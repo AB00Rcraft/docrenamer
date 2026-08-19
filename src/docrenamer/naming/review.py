@@ -29,6 +29,16 @@ BARE_NUMBER_RE = re.compile(r"^\d{1,2}$")
 NUMERIC_KINDS = frozenset({"date", "datetime", "identifier", "series", "count", "duration", "gps"})
 
 
+def dedupe_key(text: str) -> str:
+    """Ключ сравнения сегментов без разделителей.
+
+    «Договор_купли_продажи» и «купли-продажи» — это одно и то же, хотя
+    записаны по-разному. Без такой нормализации предмет повторяет вид
+    документа прямо в имени файла.
+    """
+    return re.sub(r"[^\w]|_", "", comparison_key(text))
+
+
 @dataclass(frozen=True, slots=True)
 class Issue:
     """Замечание к имени."""
@@ -46,7 +56,7 @@ def review_segments(segments: list[Segment]) -> tuple[list[Segment], list[Issue]
 
     for segment in segments:
         text = segment.text.strip()
-        key = comparison_key(text)
+        key = dedupe_key(text)
         if not key:
             continue
 

@@ -15,7 +15,7 @@ import re
 from docrenamer.config import Config
 from docrenamer.extractors.dates import extract_dates
 from docrenamer.naming.dates import date_variants, format_date_for_name
-from docrenamer.naming.review import is_blocking, review_name, review_segments
+from docrenamer.naming.review import dedupe_key, is_blocking, review_name, review_segments
 from docrenamer.naming.sanitizer import (
     MAX_FILENAME_BYTES,
     SEPARATOR_CHAR,
@@ -605,7 +605,7 @@ def _dedupe_segments(segments: list[Segment]) -> list[Segment]:
     result: list[Segment] = []
     seen: list[str] = []
     for segment in segments:
-        key = comparison_key(segment.text)
+        key = dedupe_key(segment.text)
         if any(key == other or key in other or other in key for other in seen if other):
             continue
         seen.append(key)

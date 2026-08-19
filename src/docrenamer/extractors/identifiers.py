@@ -26,8 +26,10 @@ COURT_CASE_RE = re.compile(
 #: Явный номер дела с указанием «№».
 GENERIC_CASE_RE = re.compile(r"\bдел[оаеу]\s*№\s*([^\s,;]{3,40})", re.IGNORECASE)
 
-#: Номер документа после знака «№».
-NUMBER_AFTER_SIGN_RE = re.compile(r"№\s*([0-9][0-9A-Za-zА-Яа-яЁё\-/._]{1,40})")
+#: Номер документа после знака «№». Длина ограничена: иначе в номер попадает
+#: всё, что напечатано следом, и в имени оказывается бессмысленная строка
+#: вида «2.1183-2026-2124».
+NUMBER_AFTER_SIGN_RE = re.compile(r"№\s*([0-9][0-9A-Za-zА-Яа-яЁё\-/._]{0,19})")
 
 #: Номер договора: «Договор № 17», «договор займа №17».
 CONTRACT_RE = re.compile(
@@ -48,6 +50,35 @@ DATE_LIKE_RE = re.compile(r"^\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4}$|^\d{4}-\d{2}-\d{
 WRIT_RE = re.compile(r"\b(?:сери[яи]\s*)?(ФС|ВС|АС)\s*№?\s*(\d{6,12})\b")
 
 
+#: Разделители, допустимые внутри номера.
+_SEPARATORS = "-/._"
+
+#: Похоже на денежную сумму или дробное число, а не на номер.
+DECIMAL_RE = re.compile(r"^\d+[.,]\d+$")
+
+
+def is_plausible_number(value: str) -> bool:
+    """Похоже ли значение на номер документа.
+
+    Настоящий номер короткий и содержит немного разделителей. Строка вида
+    «2.1183-2026-2124» — это склейка нескольких чисел из текста, и в имени
+    файла она только мешает.
+    """
+    text = value.strip()
+    if not text or len(text) > 20:
+        return False
+    if DECIMAL_RE.match(text):
+        return False
+    if text[-1] in _SEPARATORS:
+        return False
+    # Больше двух разделителей — это уже склейка нескольких чисел.
+    # Номера исполнительных производств и дел разбираются отдельными
+    # правилами, поэтому ограничение им не мешает.
+    if sum(text.count(char) for char in _SEPARATORS) > 2:
+        return False
+    return any(char.isdigit() for char in text)
+
+
 def _add(
     found: dict[str, Candidate],
     text: str,
@@ -62,6 +93,8 @@ def _add(
         return
     if kind in ("document_number", "contract_number") and DATE_LIKE_RE.match(value):
         # Это дата, а не номер: она попадёт в имя как дата.
+        return
+    if kind in ("document_number", "contract_number") and not is_plausible_number(value):
         return
     key = f"{kind}:{value.casefold()}"
     candidate = Candidate(

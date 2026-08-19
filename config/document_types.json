@@ -579,6 +579,103 @@
       ],
       "priority": 45,
       "filename_abbreviation": "Распоряжение"
+    },
+    {
+      "canonical_name": "Договор купли-продажи",
+      "aliases": [],
+      "markers": [
+        "договор купли-продажи",
+        "купли-продажи",
+        "продавец и покупатель"
+      ],
+      "priority": 78,
+      "filename_abbreviation": "Договор_купли_продажи"
+    },
+    {
+      "canonical_name": "Договор аренды",
+      "aliases": [],
+      "markers": [
+        "договор аренды",
+        "арендодатель",
+        "арендатор"
+      ],
+      "priority": 78,
+      "filename_abbreviation": "Договор_аренды"
+    },
+    {
+      "canonical_name": "Договор подряда",
+      "aliases": [],
+      "markers": [
+        "договор подряда",
+        "подрядчик обязуется"
+      ],
+      "priority": 78,
+      "filename_abbreviation": "Договор_подряда"
+    },
+    {
+      "canonical_name": "Договор оказания услуг",
+      "aliases": [],
+      "markers": [
+        "договор оказания услуг",
+        "договор возмездного оказания услуг",
+        "исполнитель обязуется оказать"
+      ],
+      "priority": 78,
+      "filename_abbreviation": "Договор_оказания_услуг"
+    },
+    {
+      "canonical_name": "Договор поставки",
+      "aliases": [],
+      "markers": [
+        "договор поставки",
+        "поставщик обязуется поставить"
+      ],
+      "priority": 78,
+      "filename_abbreviation": "Договор_поставки"
+    },
+    {
+      "canonical_name": "Договор дарения",
+      "aliases": [],
+      "markers": [
+        "договор дарения",
+        "даритель",
+        "одаряемый"
+      ],
+      "priority": 78,
+      "filename_abbreviation": "Договор_дарения"
+    },
+    {
+      "canonical_name": "Договор цессии",
+      "aliases": [],
+      "markers": [
+        "договор цессии",
+        "уступки права требования",
+        "цедент",
+        "цессионарий"
+      ],
+      "priority": 78,
+      "filename_abbreviation": "Договор_цессии"
+    },
+    {
+      "canonical_name": "Договор залога",
+      "aliases": [],
+      "markers": [
+        "договор залога",
+        "залогодатель",
+        "залогодержатель"
+      ],
+      "priority": 78,
+      "filename_abbreviation": "Договор_залога"
+    },
+    {
+      "canonical_name": "Кредитный договор",
+      "aliases": [],
+      "markers": [
+        "кредитный договор",
+        "заёмщик обязуется возвратить кредит"
+      ],
+      "priority": 78,
+      "filename_abbreviation": "Кредитный_договор"
     }
   ]
 }

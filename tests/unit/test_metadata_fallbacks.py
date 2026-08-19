@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from docrenamer.metadata.ffprobe import duration_label, media_datetime
 from docrenamer.metadata.mp4_atoms import Mp4Backend, probe_mp4
 from docrenamer.metadata.pillow_exif import PillowExifBackend, read_exif
 from docrenamer.paths import AppPaths
+from docrenamer.types import Status
 from tests.fixtures import builders
 
 # --- EXIF средствами Pillow ------------------------------------------------
@@ -149,24 +151,25 @@ def test_gps_included_only_when_configured(
 # --- время в имени ----------------------------------------------------------
 
 
-def test_time_is_kept_only_for_real_capture_moment(
-    config: Config, app_paths: AppPaths, workdir: Path
-) -> None:
-    """Время в имени — только если это настоящий момент съёмки.
+def test_photos_carry_time(config: Config, app_paths: AppPaths, workdir: Path) -> None:
+    """У снимков время в имени есть: за день их бывает много.
 
-    У снимка без EXIF время файла означает момент копирования, а не съёмки:
-    такая точность вводит в заблуждение.
+    Из EXIF берётся момент съёмки, без EXIF — время файла; источник времени
+    помечается в manifest, чтобы его происхождение не терялось.
     """
     config.allow_system_binaries = False
     builders.make_jpeg_with_exif(workdir / "IMG_7834.jpg")
     builders.make_jpeg(workdir / "IMG_1822.jpg")
 
     app = Application(config, paths=app_paths)
-    names = {i.source_path.name: i.proposed_filename for i in app.preview(workdir).items}
+    items = {i.source_path.name: i for i in app.preview(workdir).items}
 
-    assert names["IMG_7834.jpg"].endswith("_03.08.2026_18.42.17.jpg")
-    assert names["IMG_1822.jpg"].count(".") == 3, names["IMG_1822.jpg"]
-    assert "_18.42.17" not in names["IMG_1822.jpg"]
+    assert items["IMG_7834.jpg"].proposed_filename.endswith("_03.08.2026_18.42.17.jpg")
+    without_exif = items["IMG_1822.jpg"]
+    assert re.search(r"_\d{2}\.\d{2}\.\d{4}_\d{2}\.\d{2}\.\d{2}\.jpg$",
+                     without_exif.proposed_filename), without_exif.proposed_filename
+    assert without_exif.analysis is not None
+    assert without_exif.analysis.has_status(Status.DATE_SOURCE_FILESYSTEM)
 
 
 def test_documents_never_carry_time(
