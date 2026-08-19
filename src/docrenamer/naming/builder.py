@@ -369,15 +369,14 @@ def _document_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
 
     type_value = _value(analysis.document_type)
     if type_value:
-        default_label = bool((analysis.metadata or {}).get("document_type_default"))
-        segments.append(
-            Segment(
-                type_value,
-                PRIORITY_TYPE,
-                droppable=False,
-                kind="type_default" if default_label else "type",
-            )
-        )
+        metadata = analysis.metadata or {}
+        if metadata.get("document_type_default"):
+            kind = "type_default"
+        elif metadata.get("document_type_from_filename"):
+            kind = "type_from_name"
+        else:
+            kind = "type"
+        segments.append(Segment(type_value, PRIORITY_TYPE, droppable=False, kind=kind))
 
     subject_value = _value(analysis.subject)
     if subject_value:
@@ -396,12 +395,22 @@ def _document_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     if entities:
         segments.append(Segment(entities, PRIORITY_ENTITY, kind="entities"))
 
-    identifier = _value(analysis.document_number)
+    identifier_field = analysis.document_number
+    identifier = _value(identifier_field)
     if not identifier and analysis.case_numbers:
-        identifier = _value(analysis.case_numbers[0])
+        identifier_field = analysis.case_numbers[0]
+        identifier = _value(identifier_field)
     if identifier:
+        # Номер, прочитанный в самом имени файла, форму имени задаёт, но нового
+        # о документе не сообщает — переименовывать файл только ради него не за чем.
+        from_filename = identifier_field is not None and identifier_field.source is Source.FILENAME
         segments.append(
-            Segment(identifier, PRIORITY_IDENTIFIER, droppable=False, kind="identifier")
+            Segment(
+                identifier,
+                PRIORITY_IDENTIFIER,
+                droppable=False,
+                kind="identifier_from_name" if from_filename else "identifier",
+            )
         )
     return segments
 
@@ -427,7 +436,9 @@ def clean_original_stem(stem: str) -> str:
     """
     text = _STEM_DATE_RE.sub(" ", nfc(str(stem or "")))
     parts: list[str] = []
-    for token in _TOKEN_SPLIT_RE.split(text):
+    # Разбиваем только по пробелам и подчёркиваниям: «33-52030» — это одно
+    # значение, и рвать его по дефису нельзя.
+    for token in re.split(r"[\s_]+", text):
         token = token.strip()
         if not token:
             continue
@@ -584,8 +595,9 @@ def _order_segments(segments: list[Segment], config: Config) -> list[Segment]:
     dates = [s for s in segments if s.kind in ("date", "datetime")]
     rest = [s for s in segments if s.kind not in ("date", "datetime")]
     # Вид документа — первое слово имени: именно его человек ищет глазами.
-    types = [s for s in rest if s.kind in ("type", "type_default")]
-    others = [s for s in rest if s.kind not in ("type", "type_default")]
+    type_kinds = ("type", "type_default", "type_from_name")
+    types = [s for s in rest if s.kind in type_kinds]
+    others = [s for s in rest if s.kind not in type_kinds]
     rest = types + others
     return rest + dates if rest else segments
 

@@ -26,7 +26,18 @@ DATE_TOKEN_RE = re.compile(r"^\d{1,2}[.\-]\d{1,2}[.\-]\d{4}$|^\d{4}-\d{2}-\d{2}$
 BARE_NUMBER_RE = re.compile(r"^\d{1,2}$")
 
 #: Виды сегментов, которым число или дата принадлежат по праву.
-NUMERIC_KINDS = frozenset({"date", "datetime", "identifier", "series", "count", "duration", "gps"})
+NUMERIC_KINDS = frozenset(
+    {
+        "date",
+        "datetime",
+        "identifier",
+        "identifier_from_name",
+        "series",
+        "count",
+        "duration",
+        "gps",
+    }
+)
 
 
 def dedupe_key(text: str) -> str:

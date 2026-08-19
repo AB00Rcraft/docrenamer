@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -310,6 +311,10 @@ class Pipeline:
                 confidence=best_type.confidence,
             )
             analysis.metadata["document_type_canonical"] = best_type.value
+            if best_type.context.startswith("имя файла"):
+                # Название вида взято из самого имени файла: форму имени оно
+                # задаёт, но нового о документе не сообщает.
+                analysis.metadata["document_type_from_filename"] = True
         else:
             # Вид документа не подтверждён. Лучше назвать файл нейтрально по
             # его формату, чем присвоить ему чужой юридический ярлык
@@ -371,14 +376,16 @@ class Pipeline:
         if main_identifier is not None:
             analysis.document_number = Field(
                 value=main_identifier.value,
-                source=Source.REGEX,
+                # Источник сохраняется: номер из имени файла и номер из текста
+                # документа — разное знание.
+                source=main_identifier.source,
                 evidence=main_identifier.context,
                 confidence=main_identifier.confidence,
             )
         analysis.case_numbers = [
             Field(
                 value=c.value,
-                source=Source.REGEX,
+                source=c.source,
                 evidence=c.context,
                 confidence=c.confidence,
             )
@@ -715,8 +722,8 @@ class Pipeline:
         stem = analysis.source_path.stem
         if not is_meaningful_stem(stem):
             return None
-        cleaned = clean_original_stem(stem)
-        if not cleaned:
+        cleaned = clean_original_stem(self._strip_known_values(analysis, stem))
+        if not cleaned or len(cleaned) < 4:
             return None
         return Field(
             value=cleaned[:60],
@@ -724,6 +731,30 @@ class Pipeline:
             evidence=f"слова из прежнего имени файла: {stem}",
             confidence=0.8,
         )
+
+    def _strip_known_values(self, analysis: FileAnalysis, stem: str) -> str:
+        """Убрать из прежнего имени то, что уже попадёт в новое.
+
+        Если в имени написано «Дело 33-52030_224 определение суда апелляционной
+        инстанции», то и номер дела, и вид документа программа уже извлекла.
+        Повторять их ещё раз в виде текста незачем.
+        """
+        text = stem
+        values: list[str] = []
+        if analysis.document_number is not None and analysis.document_number.accepted:
+            values.append(str(analysis.document_number.value))
+        values.extend(str(field.value) for field in analysis.case_numbers)
+        canonical = str(analysis.metadata.get("document_type_canonical") or "")
+        if canonical:
+            values.append(canonical)
+            values.extend(word for word in canonical.split() if len(word) > 4)
+        for value in values:
+            if not value:
+                continue
+            text = re.sub(re.escape(value), " ", text, flags=re.IGNORECASE)
+        # Служебные слова, которые сами по себе ничего не сообщают.
+        text = re.sub(r"\b(дело|дела|копия|скан|документ)\b", " ", text, flags=re.IGNORECASE)
+        return text
 
     def _collect_evidence(self, analysis: FileAnalysis) -> None:
         """Сохранить подтверждения принятых значений (раздел 63 ТЗ)."""

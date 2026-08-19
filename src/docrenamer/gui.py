@@ -382,6 +382,9 @@ class DocRenamerGUI:
         ttk.Label(title_block, text=APP_TITLE, style="Title.TLabel").grid(
             row=0, column=1, sticky="w"
         )
+        ttk.Label(title_block, text=__version__, style="Muted.TLabel").grid(
+            row=0, column=2, sticky="sw", padx=(PAD_S, 0), pady=(0, PAD_XS)
+        )
         ttk.Label(title_block, text=APP_SUBTITLE, style="Muted.TLabel").grid(
             row=1, column=1, sticky="w"
         )

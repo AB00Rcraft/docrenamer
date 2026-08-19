@@ -29,7 +29,7 @@ WEIGHT_HEADING = 0.95         # маркер и есть заголовок до
 WEIGHT_HEAD_PHRASE = 0.88     # словосочетание в верхней части документа
 WEIGHT_PHRASE = 0.8           # словосочетание где угодно в тексте
 WEIGHT_WORD = 0.45            # одиночное общее слово внутри текста
-WEIGHT_FILENAME = 0.55        # совпадение только по имени файла
+WEIGHT_FILENAME = 0.85        # вид документа назван прямо в имени файла
 
 #: Ниже этого порога тип документа не принимается: одного случайного слова
 #: в тексте недостаточно, чтобы назвать презентацию определением суда.
@@ -104,10 +104,11 @@ class DocumentTypeMatcher:
                 is_phrase = len(re.split(r"[\s\-–—]+", marker.strip())) > 1
                 index = haystack.find(key)
                 if index < 0:
-                    if name_key and key in name_key and is_phrase:
-                        if WEIGHT_FILENAME > score:
-                            score = WEIGHT_FILENAME
-                            evidence = f"имя файла: {filename}"
+                    # Название вида в имени файла — сильное свидетельство:
+                    # его написал человек, который документ видел.
+                    if name_key and key in name_key and is_phrase and WEIGHT_FILENAME > score:
+                        score = WEIGHT_FILENAME
+                        evidence = f"имя файла: {filename}"
                     continue
 
                 hits += 1
