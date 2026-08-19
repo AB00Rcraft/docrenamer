@@ -69,8 +69,16 @@ cat feedback/SUMMARY.md
 
 ```bash
 pytest tests/unit tests/integration tests/safety
-python -m docrenamer.security.offline_guard --audit src
+python -m docrenamer.security.offline_guard --audit src/docrenamer
 ruff check src tests
+mypy
 ```
 
+Аудит проверяет `src/docrenamer` — программу, которая работает с документами.
+Пакет `src/docrenamer_updater` содержит сетевой код по назначению, поэтому
+`--audit src` сообщит о нарушениях; отдельный тест следит за тем, чтобы
+`docrenamer` не импортировал пакет обновления.
+
 Полное ТЗ: `documentation.md`. Архитектурная записка: `ARCHITECTURE.md`.
+Устройство кода: `docs/РАЗРАБОТЧИКУ.md`. Руководство пользователя:
+`docs/РУКОВОДСТВО.md`.

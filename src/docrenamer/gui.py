@@ -21,6 +21,15 @@ from typing import Any
 
 from docrenamer import __version__
 from docrenamer.app import Application, Cancelled
+from docrenamer.browsing import (
+    has_subdirectories,
+    list_directory,
+    path_chain,
+    quick_roots,
+    start_folder,
+    subdirectories,
+    summary,
+)
 from docrenamer.config import Config, load_config
 from docrenamer.learning import LearningLog
 from docrenamer.logging.manifest import find_incomplete_sessions
@@ -42,6 +51,8 @@ from docrenamer.presentation import (
 from docrenamer.preview import (
     file_card,
     folder_preview,
+    format_size,
+    format_stamp,
     text_preview,
     thumbnail_png,
 )
@@ -200,6 +211,17 @@ TOOLTIPS: dict[str, str] = {
 }
 
 
+def center_over(window: tk.Toplevel, parent: tk.Misc) -> None:
+    """Поставить окно посреди окна программы, а не в углу экрана."""
+    window.update_idletasks()
+    top = parent.winfo_toplevel()
+    width = window.winfo_reqwidth()
+    height = window.winfo_reqheight()
+    left = top.winfo_rootx() + max(0, (top.winfo_width() - width) // 2)
+    upper = top.winfo_rooty() + max(0, (top.winfo_height() - height) // 3)
+    window.geometry(f"+{max(0, left)}+{max(0, upper)}")
+
+
 def _resolved(path: Path) -> Path:
     """Путь в сравнимом виде: без «..» и по возможности без ссылок."""
     try:
@@ -209,23 +231,58 @@ def _resolved(path: Path) -> Path:
 
 
 class Tooltip:
-    """Всплывающая подсказка для виджета."""
+    """Всплывающая подсказка для виджета.
 
-    def __init__(self, widget: tk.Widget, text: str) -> None:
+    Подсказка обязана помогать, а не загораживать. Пока человек ведёт мышь к
+    нужной кнопке, он проходит над соседними, и подсказка, выскакивающая
+    мгновенно, закрывает как раз то, куда он целится. Поэтому текст
+    появляется, только если указатель задержался на элементе управления и по
+    нему не нажали, и держится недолго: прочитать успеваешь, вид не закрыт.
+
+    Нажатие убирает подсказку сразу: человек уже понял, чего хотел.
+    """
+
+    #: Сколько ждать наведения без нажатия, прежде чем показать.
+    DELAY_MS = 500
+    #: Сколько подсказка держится на экране.
+    SHOW_MS = 4000
+
+    def __init__(
+        self,
+        widget: tk.Widget,
+        text: str,
+        *,
+        delay: int = DELAY_MS,
+        show: int = SHOW_MS,
+    ) -> None:
         self.widget = widget
         self.text = text
+        self.delay = delay
+        self.show_ms = show
         self.window: tk.Toplevel | None = None
-        widget.bind("<Enter>", self._show)
+        self._appear: str | None = None
+        self._vanish: str | None = None
+        widget.bind("<Enter>", self._schedule)
         widget.bind("<Leave>", self._hide)
+        widget.bind("<ButtonPress>", self._hide)
+        widget.bind("<Destroy>", self._hide)
 
-    def _show(self, _event: object = None) -> None:
-        if self.window is not None:
+    def set_text(self, text: str) -> None:
+        """Заменить текст подсказки, не заводя вторую."""
+        self.text = text
+        self._hide()
+
+    def _schedule(self, _event: object = None) -> None:
+        """Отсчитать задержку: показывать сразу — значит мешать."""
+        self._cancel()
+        self._appear = self.widget.after(self.delay, self._show)
+
+    def _show(self) -> None:
+        self._appear = None
+        if self.window is not None or not self.text:
             return
-        x = self.widget.winfo_rootx() + 10
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
         self.window = tk.Toplevel(self.widget)
         self.window.wm_overrideredirect(True)
-        self.window.wm_geometry(f"+{x}+{y}")
         label = tk.Label(
             self.window,
             text=self.text,
@@ -238,11 +295,41 @@ class Tooltip:
             pady=4,
         )
         label.pack()
+        self._place()
+        self._vanish = self.widget.after(self.show_ms, self._hide)
+
+    def _place(self) -> None:
+        """Поставить подсказку под виджетом и не дать ей уйти за край экрана."""
+        if self.window is None:
+            return
+        self.window.update_idletasks()
+        width = self.window.winfo_reqwidth()
+        height = self.window.winfo_reqheight()
+        x = self.widget.winfo_rootx() + 10
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        x = max(0, min(x, self.widget.winfo_screenwidth() - width - 4))
+        if y + height > self.widget.winfo_screenheight():
+            # Внизу не помещается — показываем над виджетом, но и там не
+            # накрываем его самого.
+            y = max(0, self.widget.winfo_rooty() - height - 4)
+        self.window.wm_geometry(f"+{x}+{y}")
 
     def _hide(self, _event: object = None) -> None:
+        self._cancel()
         if self.window is not None:
             self.window.destroy()
             self.window = None
+
+    def _cancel(self) -> None:
+        """Снять отложенные показ и скрытие."""
+        for job in (self._appear, self._vanish):
+            if job is None:
+                continue
+            try:
+                self.widget.after_cancel(job)
+            except tk.TclError:  # виджета уже нет — отменять нечего
+                pass
+        self._appear = self._vanish = None
 
 
 class CenterProgress:
@@ -442,13 +529,7 @@ class MergeDialog:
 
     def _center_over(self, parent: tk.Misc) -> None:
         """Поставить окно посреди окна программы, а не в углу экрана."""
-        self.window.update_idletasks()
-        top = parent.winfo_toplevel()
-        width = self.window.winfo_reqwidth()
-        height = self.window.winfo_reqheight()
-        left = top.winfo_rootx() + max(0, (top.winfo_width() - width) // 2)
-        upper = top.winfo_rooty() + max(0, (top.winfo_height() - height) // 3)
-        self.window.geometry(f"+{max(0, left)}+{max(0, upper)}")
+        center_over(self.window, parent)
 
     # --- список -------------------------------------------------------------
 
@@ -589,6 +670,284 @@ class MergeDialog:
         self.window.destroy()
 
     def show(self) -> tuple[list[PlanItem], str] | None:
+        """Показать окно и дождаться решения человека."""
+        self.window.grab_set()
+        self.window.wait_window()
+        return self.result
+
+
+class DirectoryDialog:
+    """Выбор рабочей папки — сразу с видом на её содержимое.
+
+    Системное окно выбора показывает одни названия папок. Но папку выбирают
+    не по названию: «Новая папка (2)» и «Скан» ничего не говорят, пока не
+    видно, что внутри — те ли это сканы, тот ли том дела. Приходится выйти,
+    открыть проводник, посмотреть и вернуться.
+
+    Поэтому окно своё: слева дерево папок, справа содержимое выбранной —
+    имена, размеры и время изменения. Двойной щелчок по папке справа входит
+    в неё, кнопка «Вверх» поднимает на уровень выше, путь можно вписать
+    руками.
+
+    Окно ничего не меняет на диске: файлы только перечисляются.
+    """
+
+    #: Ширина и высота окна: содержимое должно быть видно списком, а не щелью.
+    SIZE = (940, 560)
+
+    def __init__(self, parent: tk.Misc, initial: Path | None = None) -> None:
+        self.result: Path | None = None
+        self.roots = quick_roots()
+        self.current = start_folder(initial)
+        #: Строка дерева → папка. У строк-заглушек пути нет.
+        self.folders: dict[str, Path] = {}
+        #: Строка списка содержимого → путь, чтобы входить двойным щелчком.
+        self.entries: dict[str, Path] = {}
+        #: Перерисовка идёт сама — отметка не даёт выбору зациклиться.
+        self._syncing = False
+
+        self.window = tk.Toplevel(parent)
+        self.window.title("Выберите папку с документами")
+        self.window.configure(bg=COLORS["bg"])
+        self.window.transient(parent.winfo_toplevel())
+        self.window.columnconfigure(0, weight=1)
+        self.window.rowconfigure(2, weight=1)
+
+        ttk.Label(
+            self.window,
+            text=(
+                "Слева — папки, справа — что в выбранной лежит.\n"
+                "Двойной щелчок по папке справа открывает её."
+            ),
+            style="Muted.TLabel",
+            justify="left",
+        ).grid(row=0, column=0, sticky="w", padx=PAD_L, pady=(PAD_L, PAD_S))
+
+        self._build_path_row()
+        self._build_panes()
+
+        self.summary_var = tk.StringVar(value="")
+        ttk.Label(self.window, textvariable=self.summary_var, style="Muted.TLabel").grid(
+            row=3, column=0, sticky="w", padx=PAD_L, pady=(PAD_S, 0)
+        )
+
+        buttons = ttk.Frame(self.window)
+        buttons.grid(row=4, column=0, sticky="e", padx=PAD_L, pady=PAD_L)
+        ttk.Button(buttons, text="Отмена", width=BUTTON_WIDTH, command=self._cancel).grid(
+            row=0, column=0
+        )
+        ttk.Button(
+            buttons,
+            text="Выбрать эту папку",
+            width=BUTTON_WIDTH + 6,
+            style="Accent.TButton",
+            command=self._accept,
+        ).grid(row=0, column=1, padx=(PAD_M, 0))
+
+        self.window.bind("<Escape>", lambda _event: self._cancel())
+        self.window.geometry("{}x{}".format(*self.SIZE))
+        self._show_roots()
+        self._goto(self.current)
+        center_over(self.window, parent)
+
+    # --- построение окна ----------------------------------------------------
+
+    def _build_path_row(self) -> None:
+        """Строка пути: её можно прочитать, поправить и вставить из буфера."""
+        row = ttk.Frame(self.window)
+        row.grid(row=1, column=0, sticky="ew", padx=PAD_L)
+        row.columnconfigure(1, weight=1)
+        ttk.Label(row, text="Папка:").grid(row=0, column=0, sticky="w")
+        self.path_var = tk.StringVar(value=str(self.current))
+        entry = ttk.Entry(row, textvariable=self.path_var, font=FONT_UI)
+        entry.grid(row=0, column=1, sticky="ew", padx=(PAD_M, PAD_M))
+        entry.bind("<Return>", self._on_typed_path)
+        up = ttk.Button(row, text="Вверх", width=BUTTON_WIDTH - 4, command=self._go_up)
+        up.grid(row=0, column=2)
+        Tooltip(up, "Подняться на папку выше.")
+
+    def _build_panes(self) -> None:
+        """Две половины окна: дерево папок и содержимое выбранной."""
+        panes = ttk.Frame(self.window)
+        panes.grid(row=2, column=0, sticky="nsew", padx=PAD_L, pady=(PAD_S, 0))
+        panes.rowconfigure(0, weight=1)
+        panes.columnconfigure(0, weight=2, uniform="panes")
+        panes.columnconfigure(2, weight=3, uniform="panes")
+
+        self.tree = ttk.Treeview(panes, show="tree", selectmode="browse")
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        tree_scroll = ttk.Scrollbar(panes, orient="vertical", command=self.tree.yview)
+        tree_scroll.grid(row=0, column=1, sticky="ns", padx=(0, PAD_M))
+        self.tree.configure(yscrollcommand=tree_scroll.set)
+        self.tree.bind("<<TreeviewOpen>>", self._on_open)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        self.contents = ttk.Treeview(
+            panes, columns=("size", "changed"), show="tree headings", selectmode="browse"
+        )
+        self.contents.heading("#0", text="Содержимое")
+        self.contents.column("#0", width=380, minwidth=200, stretch=True, anchor="w")
+        self.contents.heading("size", text="Размер")
+        self.contents.column("size", width=90, minwidth=70, stretch=False, anchor="e")
+        self.contents.heading("changed", text="Изменён")
+        self.contents.column("changed", width=130, minwidth=110, stretch=False, anchor="center")
+        self.contents.tag_configure("dir", foreground=COLORS["accent"])
+        self.contents.grid(row=0, column=2, sticky="nsew")
+        contents_scroll = ttk.Scrollbar(
+            panes, orient="vertical", command=self.contents.yview
+        )
+        contents_scroll.grid(row=0, column=3, sticky="ns")
+        self.contents.configure(yscrollcommand=contents_scroll.set)
+        self.contents.bind("<Double-1>", self._on_enter_folder)
+
+    # --- дерево папок -------------------------------------------------------
+
+    def _show_roots(self) -> None:
+        """Начало обзора: диски и привычные папки пользователя."""
+        for label, root in self.roots:
+            node = str(root)
+            if self.tree.exists(node):
+                continue
+            self.tree.insert("", "end", iid=node, text=f"📁 {label}", open=False)
+            self.folders[node] = root
+            self._add_stub(node, root)
+
+    def _add_stub(self, node: str, path: Path) -> None:
+        """Заглушка внутри узла: по ней видно, что папку есть чем раскрыть.
+
+        Содержимое читается только при раскрытии — иначе окно обходило бы
+        весь диск ради одной стрелки.
+        """
+        if has_subdirectories(path):
+            self.tree.insert(node, "end", iid=f"{node}::stub", text="…")
+
+    def _fill(self, node: str) -> None:
+        """Показать вложенные папки узла, если они ещё не показаны."""
+        path = self.folders.get(node)
+        if path is None:
+            return
+        children = self.tree.get_children(node)
+        if children and not children[0].endswith("::stub"):
+            return
+        for child in children:
+            self.tree.delete(child)
+        for folder in subdirectories(path):
+            child_node = str(folder)
+            if self.tree.exists(child_node):
+                continue
+            self.tree.insert(node, "end", iid=child_node, text=f"📁 {folder.name}")
+            self.folders[child_node] = folder
+            self._add_stub(child_node, folder)
+
+    def _on_open(self, _event: object = None) -> None:
+        node = self.tree.focus()
+        if node:
+            self._fill(node)
+
+    def _on_select(self, _event: object = None) -> None:
+        if self._syncing:
+            return
+        selection = self.tree.selection()
+        if not selection:
+            return
+        path = self.folders.get(selection[0])
+        if path is not None:
+            self._goto(path, reveal=False)
+
+    def _reveal(self, path: Path) -> None:
+        """Раскрыть дерево до папки и подсветить её.
+
+        Если папка лежит вне известных начал обзора (сетевой путь, чужой
+        диск), дерево остаётся как есть — содержимое справа всё равно
+        показано.
+        """
+        chain = path_chain(path, self.roots)
+        if not chain:
+            return
+        self._syncing = True
+        try:
+            for step in chain:
+                node = str(step)
+                if not self.tree.exists(node):
+                    return
+                self._fill(node)
+                self.tree.item(node, open=True)
+            node = str(chain[-1])
+            self.tree.selection_set(node)
+            self.tree.see(node)
+        finally:
+            self._syncing = False
+
+    # --- содержимое ---------------------------------------------------------
+
+    def _goto(self, path: Path, *, reveal: bool = True) -> None:
+        """Перейти в папку: показать её содержимое и отметить в дереве."""
+        self.current = path
+        self.path_var.set(str(path))
+        self._show_contents(path)
+        if reveal:
+            self._reveal(path)
+
+    def _show_contents(self, path: Path) -> None:
+        """Список того, что лежит в папке."""
+        listing = list_directory(path)
+        self.entries = {}
+        self.contents.delete(*self.contents.get_children())
+        for entry in listing.entries:
+            row = self.contents.insert(
+                "",
+                "end",
+                text=f"📁 {entry.name}" if entry.is_dir else entry.name,
+                values=(
+                    "" if entry.is_dir else format_size(entry.size),
+                    format_stamp(entry.mtime),
+                ),
+                tags=("dir",) if entry.is_dir else (),
+            )
+            self.entries[row] = entry.path
+        self.summary_var.set(summary(listing))
+
+    def _on_enter_folder(self, event: tk.Event) -> None:
+        """Двойной щелчок по папке справа — войти в неё."""
+        row = self.contents.identify_row(event.y)
+        path = self.entries.get(row)
+        if path is not None and path.is_dir():
+            self._goto(path)
+
+    def _on_typed_path(self, _event: object = None) -> str:
+        """Путь, вписанный руками, — тоже способ выбрать папку."""
+        typed = Path(self.path_var.get().strip())
+        if typed.is_dir():
+            self._goto(typed)
+        else:
+            messagebox.showwarning(
+                "Выбор папки", f"Папка не найдена:\n{typed}", parent=self.window
+            )
+        return "break"
+
+    def _go_up(self) -> None:
+        parent = self.current.parent
+        if parent != self.current:
+            self._goto(parent)
+
+    # --- решение человека ---------------------------------------------------
+
+    def _accept(self) -> None:
+        if not self.current.is_dir():
+            messagebox.showwarning(
+                "Выбор папки",
+                f"Папка не найдена:\n{self.current}",
+                parent=self.window,
+            )
+            return
+        self.result = self.current
+        self.window.destroy()
+
+    def _cancel(self) -> None:
+        self.result = None
+        self.window.destroy()
+
+    def show(self) -> Path | None:
         """Показать окно и дождаться решения человека."""
         self.window.grab_set()
         self.window.wait_window()
@@ -842,7 +1201,9 @@ class DocRenamerGUI:
             header, textvariable=self.readiness_var, style="Muted.TLabel"
         )
         self.readiness_label.grid(row=0, column=1, sticky="e", padx=(PAD_M, PAD_L))
-        Tooltip(self.readiness_label, TOOLTIPS["readiness"])
+        # Подсказка одна на всё время работы: самопроверка меняет её текст, а
+        # не заводит вторую.
+        self.readiness_tip = Tooltip(self.readiness_label, TOOLTIPS["readiness"])
 
         badge = ttk.Label(header, text="● LOCAL ONLY", style="Local.TLabel")
         badge.grid(row=0, column=2, sticky="e")
@@ -1312,10 +1673,11 @@ class DocRenamerGUI:
     # --- действия ----------------------------------------------------------
 
     def _choose_directory(self) -> None:
-        selected = filedialog.askdirectory(title="Выберите папку с документами")
-        if selected:
-            self.directory = Path(selected)
-            self.directory_var.set(selected)
+        """Выбор папки своим окном: системное не показывает содержимого."""
+        selected = DirectoryDialog(self.root, self.directory).show()
+        if selected is not None:
+            self.directory = selected
+            self.directory_var.set(str(selected))
 
     def _current_directory(self) -> Path | None:
         text = self.directory_var.get().strip()
@@ -1635,7 +1997,7 @@ class DocRenamerGUI:
         details = "\n".join(
             f"{check.icon} {check.name}: {check.detail}" for check in report.checks
         )
-        Tooltip(self.readiness_label, details)
+        self.readiness_tip.set_text(details)
 
     # --- план --------------------------------------------------------------
 
