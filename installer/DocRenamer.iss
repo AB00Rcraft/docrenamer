@@ -7,7 +7,7 @@
 ; Сборка: ISCC.exe installer\DocRenamer.iss
 
 #define AppName "Переименователь документов"
-#define AppVersion "1.1.0"
+#define AppVersion "1.1.1"
 #define AppPublisher "DocRenamer"
 #define AppExeName "DocRenamer.exe"
 
@@ -36,6 +36,17 @@ AppComments=Локальное переименование документов
 VersionInfoVersion={#AppVersion}
 VersionInfoDescription={#AppName}
 
+; Обновление поверх прежней версии.
+; CloseApplications: Windows сама закрывает запущенные файлы программы через
+; Restart Manager — иначе установка спотыкается о занятый DocRenamer.exe.
+CloseApplications=yes
+CloseApplicationsFilter=*.exe,*.dll,*.pyd
+RestartApplications=no
+SetupMutex=DocRenamerOfflineSetup
+DirExistsWarning=no
+UsePreviousAppDir=yes
+AllowCancelDuringInstall=yes
+
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
@@ -45,7 +56,10 @@ Name: "contextmenu"; Description: "Пункт «Переименовать фа�
 
 [Files]
 Source: "..\dist\DocRenamer\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\dist\updater\DocRenamerUpdate.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; Программа обновления сама запускает этот установщик, поэтому её файл может
+; быть занят. Флаг replacesameversion отключён, а сама программа обновления
+; запускается из временной копии — см. docrenamer_updater/cli.py.
+Source: "..\dist\updater\DocRenamerUpdate.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist uninsrestartdelete
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\runtime\README.md"; DestDir: "{app}\runtime"; Flags: ignoreversion
@@ -72,6 +86,43 @@ Root: HKCU; Subkey: "Software\Classes\Directory\shell\DocRenamer\command"; Value
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\DocRenamer"; ValueType: string; ValueName: ""; ValueData: "Переименовать файлы (DocRenamer)"; Flags: uninsdeletekey; Tasks: contextmenu
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\DocRenamer"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#AppExeName}"; Tasks: contextmenu
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\DocRenamer\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%V"""; Flags: uninsdeletekey; Tasks: contextmenu
+
+[Code]
+{ Перед установкой снимаем прежнюю версию: остатки старой раскладки мешают
+  копированию, а обновление должно проходить без вопросов к пользователю. }
+function PreviousUninstaller(): String;
+var
+  Key: String;
+  Value: String;
+begin
+  Result := '';
+  Key := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#emit SetupSetting("AppId")}_is1';
+  if RegQueryStringValue(HKCU, Key, 'QuietUninstallString', Value) then
+    Result := Value
+  else if RegQueryStringValue(HKLM, Key, 'QuietUninstallString', Value) then
+    Result := Value
+  else if RegQueryStringValue(HKCU, Key, 'UninstallString', Value) then
+    Result := Value + ' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART'
+  else if RegQueryStringValue(HKLM, Key, 'UninstallString', Value) then
+    Result := Value + ' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART';
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Command: String;
+  ResultCode: Integer;
+begin
+  Result := '';
+  NeedsRestart := False;
+  Command := PreviousUninstaller();
+  if Command <> '' then
+  begin
+    { Ошибку снятия прежней версии не считаем поводом отменить установку:
+      файлы всё равно будут перезаписаны. }
+    Exec('>', Command, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(1200);
+  end;
+end;
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Запустить {#AppName}"; Flags: nowait postinstall skipifsilent

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -87,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.check or not args.install:
         return EXIT_OK
 
+    # Установщик перезапишет и этот файл — работаем из временной копии.
+    if relaunch_from_temp(sys.argv[1:]):
+        return EXIT_OK
+
     try:
         target_dir = Path(tempfile.gettempdir()) / "docrenamer-update"
         installer = download(release, target_dir)
@@ -96,6 +102,42 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Загружено: {installer}")
     return _install(installer, args.restart)
+
+
+def _is_windows() -> bool:
+    """Windows ли это. Отдельной функцией — чтобы проверять поведение в тестах."""
+    return os.name == "nt"
+
+
+def relaunch_from_temp(argv: list[str]) -> bool:
+    """Перезапустить саму программу обновления из временного каталога.
+
+    Установщик перезаписывает и сам файл ``DocRenamerUpdate.exe``. Если он
+    запущен из каталога программы, файл занят, и установка спотыкается.
+    Поэтому перед установкой программа обновления копирует себя во временный
+    каталог и продолжает работу оттуда.
+
+    Returns:
+        True, если работа передана временной копии и текущий процесс должен
+        завершиться.
+    """
+    if not getattr(sys, "frozen", False) or not _is_windows():
+        return False
+    current = Path(sys.executable).resolve()
+    temp_dir = Path(tempfile.gettempdir()) / "docrenamer-update"
+    temp_copy = temp_dir / current.name
+    try:
+        if current.parent.resolve() == temp_dir.resolve():
+            return False
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(current, temp_copy)
+        subprocess.Popen(  # noqa: S603 — копия самой программы, список аргументов
+            [str(temp_copy), *argv], shell=False, close_fds=True
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"Не удалось подготовить обновление: {exc}", file=sys.stderr)
+        return False
+    return True
 
 
 def _install(installer: Path, restart: str) -> int:

@@ -280,3 +280,76 @@ def test_closed_source_reports_understandable_message(
 
     assert "закрыт" in str(exc.value)
     assert "404" not in str(exc.value)
+
+
+# --- обновление поверх установленной версии ---------------------------------
+
+
+def test_updater_relaunches_itself_from_temp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Программа обновления уходит во временный каталог перед установкой.
+
+    Установщик перезаписывает и её файл: запущенный из каталога программы, он
+    занят, и установка спотыкается.
+    """
+    import subprocess as subprocess_module
+
+    from docrenamer_updater import cli as updater_cli
+
+    installed = tmp_path / "program" / "DocRenamerUpdate.exe"
+    installed.parent.mkdir()
+    installed.write_bytes(b"MZ")
+    launched: dict[str, object] = {}
+
+    monkeypatch.setattr(updater_cli.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(updater_cli.sys, "executable", str(installed), raising=False)
+    monkeypatch.setattr(updater_cli, "_is_windows", lambda: True)
+    monkeypatch.setattr(updater_cli.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+    monkeypatch.setattr(
+        subprocess_module, "Popen", lambda command, **kwargs: launched.update(command=command)
+    )
+
+    assert updater_cli.relaunch_from_temp(["--install"]) is True
+    assert "temp" in str(launched["command"][0])
+    assert launched["command"][1] == "--install"
+    assert (tmp_path / "temp" / "docrenamer-update" / "DocRenamerUpdate.exe").is_file()
+
+
+def test_updater_does_not_relaunch_in_a_loop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Уже запущенная из временного каталога копия себя не копирует."""
+    from docrenamer_updater import cli as updater_cli
+
+    temp_dir = tmp_path / "temp" / "docrenamer-update"
+    temp_dir.mkdir(parents=True)
+    running = temp_dir / "DocRenamerUpdate.exe"
+    running.write_bytes(b"MZ")
+
+    monkeypatch.setattr(updater_cli.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(updater_cli.sys, "executable", str(running), raising=False)
+    monkeypatch.setattr(updater_cli, "_is_windows", lambda: True)
+    monkeypatch.setattr(updater_cli.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+
+    assert updater_cli.relaunch_from_temp(["--install"]) is False
+
+
+def test_relaunch_is_skipped_when_not_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Из исходников программа обновления работает как есть."""
+    from docrenamer_updater import cli as updater_cli
+
+    monkeypatch.setattr(updater_cli.sys, "frozen", False, raising=False)
+    assert updater_cli.relaunch_from_temp(["--install"]) is False
+
+
+def test_installer_handles_upgrade_over_previous_version() -> None:
+    """Установщик умеет ставиться поверх прежней версии."""
+    script = (Path(__file__).resolve().parents[2] / "installer" / "DocRenamer.iss").read_text(
+        encoding="utf-8"
+    )
+
+    assert "CloseApplications=yes" in script, "занятые файлы должны закрываться"
+    assert "PrepareToInstall" in script, "прежняя версия должна сниматься заранее"
+    assert "UsePreviousAppDir=yes" in script
+    assert "SetupMutex" in script, "два установщика одновременно недопустимы"
