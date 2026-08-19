@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import queue
 import threading
@@ -736,7 +737,9 @@ class DocRenamerGUI:
             self._set_preview_text(text_preview(item))
             return
         try:
-            photo = tk.PhotoImage(data=data)
+            # Tk принимает картинку строкой base64: так работает в любой сборке,
+            # тогда как двоичные данные поддерживаются не везде.
+            photo = tk.PhotoImage(data=base64.b64encode(data).decode("ascii"))
         except tk.TclError:
             self._set_preview_text(text_preview(item))
             return
