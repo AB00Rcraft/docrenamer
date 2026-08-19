@@ -1,0 +1,28 @@
+name: Отчёт об именах
+description: Обезличенный отчёт из программы — что переименовалось неудачно
+title: "Отчёт об именах"
+labels: ["naming-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Отчёт формирует сама программа: кнопка **«Улучшение»** в главном окне.
+        В нём нет ни имён файлов, ни фамилий, ни текста документов — только
+        статистика о работе алгоритма имён.
+  - type: textarea
+    id: report
+    attributes:
+      label: Отчёт
+      description: Вставьте блок JSON, который подставила программа.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: comment
+    attributes:
+      label: Что не так с именами
+      description: |
+        Если хотите, опишите словами, что программа назвала неудачно.
+        Пожалуйста, не приводите настоящие имена файлов и фамилии.
+    validations:
+      required: false

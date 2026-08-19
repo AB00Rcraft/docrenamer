@@ -126,8 +126,12 @@ def detect_series(paths: Iterable[Path]) -> dict[Path, SeriesInfo]:
     return result
 
 
-#: Имя скана: общая часть плюс номер в конце — «IMG_5608», «scan001», «doc-12».
-SCAN_NAME_RE = re.compile(r"^(?P<prefix>.*?)(?P<num>\d{1,6})$")
+#: Номер в конце имени: «IMG_5608», «scan001», «doc-12».
+SCAN_TAIL_RE = re.compile(r"^(?P<rest>.*?)(?P<num>\d{1,6})$")
+
+#: Номер в начале имени: «1 Иск Шахманова», «01_скан», просто «1». Сканеры и
+#: люди нумеруют страницы именно так, и это тоже порядок, а не случайность.
+SCAN_HEAD_RE = re.compile(r"^(?P<num>\d{1,6})(?P<rest>.*)$")
 
 #: Насколько далеко могут отстоять номера соседних страниц. Один-два пропуска
 #: — это обычное дело: неудачный кадр удалили, а порядок остался прежним.
@@ -138,10 +142,12 @@ MAX_SCAN_GAP = 3
 class ScanPage:
     """Место файла в подряд отснятой пачке страниц."""
 
-    prefix: str
+    group: str
     number: int
     page: int
     total: int
+    #: Номер стоял в начале имени («1 Иск») или в конце («IMG_5608»).
+    position: str = "tail"
 
     @property
     def segment(self) -> str:
@@ -153,56 +159,92 @@ class ScanPage:
         width = len(str(self.total))
         return f"стр_{self.page:0{width}d}"
 
+    @property
+    def numbered_from_one(self) -> bool:
+        """Нумерация начата с первой страницы, а не с номера кадра камеры."""
+        return self.number - self.page in (0, 1)
+
     def to_dict(self) -> dict[str, object]:
         return {
-            "prefix": self.prefix,
+            "group": self.group,
             "number": self.number,
             "page": self.page,
             "total": self.total,
+            "position": self.position,
             "segment": self.segment,
         }
+
+
+def _split_number(stem: str) -> list[tuple[str, str, str]]:
+    """Разложить имя на номер и остаток обоими способами.
+
+    Возвращает пары ``(положение, остаток, цифры)``. Одно и то же имя может
+    читаться двояко — «20260818_142203» и как номер в начале, и как номер в
+    конце. Какое прочтение верное, решает группировка: настоящая пачка
+    страниц даст более длинный ряд.
+    """
+    variants: list[tuple[str, str, str]] = []
+    head = SCAN_HEAD_RE.match(stem)
+    if head is not None:
+        variants.append(("head", head.group("rest"), head.group("num")))
+    tail = SCAN_TAIL_RE.match(stem)
+    if tail is not None:
+        variants.append(("tail", tail.group("rest"), tail.group("num")))
+    return variants
 
 
 def detect_scan_pages(paths: Iterable[Path]) -> dict[Path, ScanPage]:
     """Найти пачки сканов: подряд пронумерованные файлы одного каталога.
 
-    Фотографии документа снимают одну за другой, поэтому номера камеры идут
-    подряд: ``IMG_5608``, ``IMG_5609``, ``IMG_5610``. Сам номер ничего не
-    значит — важен порядок, поэтому страницы нумеруются заново, с первой.
+    Страницы снимают и сканируют одну за другой, поэтому их порядок записан в
+    именах: ``1 Иск``, ``2 Иск`` или ``IMG_5608``, ``IMG_5609``. Сам номер
+    ничего не значит — важен порядок, поэтому страницы нумеруются заново, с
+    первой.
 
     Одного имени мало, чтобы объявить файлы страницами документа: подряд
     снятые кадры отпуска выглядят точно так же. Решение принимается выше, по
     содержимому файлов.
     """
-    groups: dict[tuple[Path, str, str, int], list[tuple[int, Path]]] = {}
+    groups: dict[tuple[str, str, str, str, int], list[tuple[int, Path]]] = {}
     for path in paths:
-        match = SCAN_NAME_RE.match(path.stem.strip())
-        if match is None:
-            continue
-        digits = match.group("num")
-        prefix = match.group("prefix")
-        # Ширина номера — часть образца: «01» и «1» нумеровали по-разному.
-        key = (path.parent, path.suffix.lower(), comparison_key(prefix), len(digits))
-        groups.setdefault(key, []).append((int(digits), path))
+        stem = path.stem.strip()
+        for position, rest, digits in _split_number(stem):
+            # Ширина номера — часть образца: «01» и «1» нумеровали по-разному.
+            key = (
+                str(path.parent),
+                path.suffix.lower(),
+                position,
+                comparison_key(rest),
+                len(digits),
+            )
+            groups.setdefault(key, []).append((int(digits), path))
 
-    result: dict[Path, ScanPage] = {}
-    for (_parent, _suffix, _prefix_key, _width), members in groups.items():
+    #: Каждый файл попадает в ту пачку, где ряд длиннее: это и есть верное
+    #: прочтение его имени.
+    best: dict[Path, ScanPage] = {}
+    for key, members in groups.items():
         members.sort()
         runs: list[list[tuple[int, Path]]] = [[members[0]]]
         for number, path in members[1:]:
+            if number == runs[-1][-1][0]:
+                continue
             if number - runs[-1][-1][0] <= MAX_SCAN_GAP:
                 runs[-1].append((number, path))
             else:
                 runs.append([(number, path)])
-        for run in runs:
+        for index, run in enumerate(runs):
             if len(run) < 2:
                 continue
-            prefix = SCAN_NAME_RE.match(run[0][1].stem.strip())
+            group_key = f"{key[0]}|{key[1]}|{key[2]}|{key[3]}|{key[4]}|{index}"
             for page, (number, path) in enumerate(run, start=1):
-                result[path] = ScanPage(
-                    prefix=prefix.group("prefix") if prefix else "",
+                candidate = ScanPage(
+                    group=group_key,
                     number=number,
                     page=page,
                     total=len(run),
+                    position=key[2],
                 )
-    return result
+                current = best.get(path)
+                if current is None or candidate.total > current.total:
+                    best[path] = candidate
+    return best

@@ -43,6 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="запустить указанную программу после установки",
     )
+    parser.add_argument(
+        "--feedback",
+        metavar="FILE",
+        default="",
+        help="открыть страницу отправки обезличенного отчёта об именах",
+    )
     parser.add_argument("--version", action="version", version=f"DocRenamerUpdate {__version__}")
     return parser
 
@@ -63,6 +69,9 @@ def main(argv: list[str] | None = None) -> int:
     configure_console()
     args = build_parser().parse_args(argv)
     current = _current_version(args.current)
+
+    if args.feedback:
+        return send_feedback(Path(args.feedback), args.repository, current)
 
     try:
         release = check(current, args.repository)
@@ -102,6 +111,46 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Загружено: {installer}")
     return _install(installer, args.restart)
+
+
+def feedback_url(report: str, repository: str, version: str) -> str:
+    """Ссылка на страницу создания обращения с уже заполненным отчётом.
+
+    Отчёт не отправляется сам: открывается обычная страница в браузере, где
+    человек видит текст целиком и решает, отправлять его или нет. Никаких
+    ключей доступа и скрытых запросов для этого не нужно.
+    """
+    from urllib.parse import quote
+
+    body = (
+        "Обезличенный отчёт об именах файлов. "
+        "Ни имён файлов, ни фамилий, ни содержимого документов в нём нет.\n\n"
+        f"```json\n{report.strip()}\n```\n"
+    )
+    title = quote(f"Отчёт об именах {version}")
+    return (
+        f"https://github.com/{repository}/issues/new"
+        f"?title={title}&body={quote(body[:6000])}"
+    )
+
+
+def send_feedback(report_file: Path, repository: str, version: str) -> int:
+    """Открыть страницу отправки отчёта в браузере."""
+    import webbrowser
+
+    try:
+        report = report_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"Отчёт не прочитан: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    url = feedback_url(report, repository, version)
+    print(url)
+    try:
+        webbrowser.open(url)
+    except Exception as exc:  # браузер может отсутствовать
+        print(f"Не удалось открыть браузер: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    return EXIT_OK
 
 
 def _is_windows() -> bool:

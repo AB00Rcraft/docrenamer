@@ -50,6 +50,22 @@ def format_plan_row(item: PlanItem) -> tuple[str, str, str, str, str]:
     )
 
 
+def plan_row_values(item: PlanItem) -> tuple[str, str, str, str]:
+    """Значения строки дерева: имя стоит в колонке дерева, отдельно от них."""
+    mark, _current, proposed, confidence, status = format_plan_row(item)
+    return (mark, proposed, confidence, status)
+
+
+def plan_row_label(item: PlanItem) -> str:
+    """Подпись строки в дереве.
+
+    У папки к имени добавляется значок: в общем списке сразу видно, где
+    заканчивается корень и начинается вложенная папка.
+    """
+    name = item.source_path.name
+    return f"📁 {name}" if item.is_folder else name
+
+
 def row_tag(item: PlanItem) -> str:
     """Цветовая метка строки предпросмотра."""
     if item.status in ERROR_STATUSES:

@@ -271,6 +271,26 @@ class UpdateConfig:
 
 
 @dataclass(slots=True)
+class LearningConfig:
+    """Журнал обучения: на чём алгоритм имён ошибается.
+
+    Пишется на диск в обезличенном виде и никуда не уходит сам. Отправку
+    выполняет отдельная программа обновления и только по прямой команде
+    человека.
+    """
+
+    #: Вести журнал.
+    enabled: bool = True
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> LearningConfig:
+        cfg = cls()
+        if "enabled" in data:
+            cfg.enabled = _as_bool(data["enabled"], "learning.enabled")
+        return cfg
+
+
+@dataclass(slots=True)
 class LimitsConfig:
     max_text_chars_for_ai: int = 24_000
     max_plaintext_file_mb: int = 50
@@ -330,6 +350,7 @@ class Config:
     archives: ArchivesConfig = field(default_factory=ArchivesConfig)
     limits: LimitsConfig = field(default_factory=LimitsConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
+    learning: LearningConfig = field(default_factory=LearningConfig)
 
     #: Откуда конфиг был прочитан (для логов). Не участвует в fingerprint.
     source_file: str = ""
@@ -375,6 +396,7 @@ class Config:
         cfg.archives = ArchivesConfig.from_dict(data.get("archives", {}) or {})
         cfg.limits = LimitsConfig.from_dict(data.get("limits", {}) or {})
         cfg.update = UpdateConfig.from_dict(data.get("update", {}) or {})
+        cfg.learning = LearningConfig.from_dict(data.get("learning", {}) or {})
         return cfg
 
     def to_dict(self) -> dict[str, Any]:

@@ -112,7 +112,17 @@ PRIORITY_SUBJECT = 25
 #: Слова, взятые из прежнего имени файла, сюда не входят: если кроме них
 #: сказать нечего, переписывать имя не за чем — мы ничего нового не узнали.
 INFORMATIVE_KINDS: frozenset[str] = frozenset(
-    {"type", "identifier", "entities", "subject", "device", "duration", "count", "gps"}
+    {
+        "type",
+        "identifier",
+        "entities",
+        "subject",
+        "device",
+        "duration",
+        "count",
+        "gps",
+        "archive_hint",
+    }
 )
 
 #: Организационно-правовые формы: полное наименование → аббревиатура.
@@ -529,8 +539,33 @@ def _email_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
 
 
 def _archive_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
-    """Сегменты для архивов (раздел 32 ТЗ)."""
-    segments: list[Segment] = []
+    """Сегменты для архивов (раздел 32 ТЗ).
+
+    Архив чаще всего называет человек, и это имя точнее любого списка файлов:
+    «иск Шахманова.zip» стоит оставить как есть, добавив, что внутри архив со
+    сканами. Полностью строится имя только для технических имён вида
+    ``archive (3).zip``.
+    """
+    metadata = analysis.metadata or {}
+    original = clean_original_stem(analysis.source_path.stem)
+    if config.naming.preserve_good_names and is_meaningful_stem(analysis.source_path.stem):
+        segments = [Segment(original, PRIORITY_TYPE, droppable=False, kind="original_kept")]
+        segments.append(Segment("архив", PRIORITY_ENTITY, kind="archive_hint"))
+        if _archive_holds_scans(metadata):
+            segments.append(Segment("сканы", PRIORITY_ENTITY, kind="archive_hint"))
+        count = metadata.get("entry_count")
+        if isinstance(count, int) and count > 1:
+            segments.append(Segment(f"{count}_файлов", PRIORITY_SUBJECT, kind="count"))
+        date_field = analysis.document_date
+        if date_field is not None and date_field.source is not Source.FILESYSTEM:
+            date_value = _date_value(analysis, config)
+            if date_value:
+                segments.append(
+                    Segment(date_value, PRIORITY_DATE, droppable=False, kind="date")
+                )
+        return segments
+
+    segments = []
     date_value = _date_value(analysis, config)
     if date_value:
         segments.append(Segment(date_value, PRIORITY_DATE, droppable=False, kind="date"))
@@ -545,6 +580,24 @@ def _archive_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:
     if count:
         segments.append(Segment(f"{count}_файлов", PRIORITY_ENTITY, kind="count"))
     return segments
+
+
+#: Расширения, по которым видно, что в архиве лежат сканы, а не что попало.
+SCAN_EXTENSIONS: frozenset[str] = frozenset(
+    {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".pdf", ".heic", ".bmp"}
+)
+
+
+def _archive_holds_scans(metadata: dict[str, object]) -> bool:
+    """Лежат ли в архиве сканы или снимки страниц."""
+    extensions = metadata.get("extensions")
+    if not isinstance(extensions, dict) or not extensions:
+        return False
+    total = sum(int(count) for count in extensions.values())
+    scans = sum(
+        int(count) for suffix, count in extensions.items() if str(suffix).lower() in SCAN_EXTENSIONS
+    )
+    return total > 0 and scans >= total * 0.8
 
 
 def _folder_segments(analysis: FileAnalysis, config: Config) -> list[Segment]:

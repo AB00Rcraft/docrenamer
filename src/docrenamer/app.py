@@ -15,6 +15,7 @@ from typing import Any
 from docrenamer import __version__
 from docrenamer.analysis import Analyzer, build_analyzer
 from docrenamer.config import Config, load_config, write_json_atomic
+from docrenamer.learning import LearningLog
 from docrenamer.logging.manifest import ManifestWriter, new_manifest_path
 from docrenamer.logging.text_log import TextLog, new_log_path
 from docrenamer.operations.planner import (
@@ -94,6 +95,10 @@ class Application:
         self.last_scan_stats: ScanStats | None = None
         #: Подкаталоги последнего сканирования — их тоже можно переименовать.
         self.last_folders: list[Path] = []
+        #: Обезличенный журнал обучения: на чём алгоритм имён ошибается.
+        self.learning = LearningLog(
+            paths=self.paths, version=__version__, enabled=self.config.learning.enabled
+        )
 
     # --- служебное ---------------------------------------------------------
 
@@ -334,6 +339,9 @@ class Application:
             if log:
                 log.summary(report.counters())
                 log.close()
+        self.learning.record_applied(
+            [item for item in items if item.status != Status.SKIPPED_LOW_CONFIDENCE.value]
+        )
         return report
 
     def forensic(self, directory: Path, *, output_dir: Path | None = None) -> dict[str, Path]:

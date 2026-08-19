@@ -29,6 +29,7 @@ from docrenamer.extractors.persons import extract_persons, select_persons
 from docrenamer.extractors.series import ScanPage, detect_scan_pages, detect_series
 from docrenamer.file_signature import check_extension, detect_type
 from docrenamer.naming.builder import build_filename, is_well_formed_name
+from docrenamer.naming.dates import format_date_for_name
 from docrenamer.paths import AppPaths, default_paths
 from docrenamer.security.limits import Limits
 from docrenamer.security.temp_cleanup import SessionTemp
@@ -63,6 +64,9 @@ FILE_KIND_LABELS: dict[str, str] = {
     "xls": "Таблица",
     "csv": "Таблица",
 }
+
+#: Виды файлов, которые бывают отдельными страницами одного документа.
+SCANNED_PAGE_KINDS: frozenset[str] = frozenset({"pdf", "tiff", "tif"})
 
 #: Виды файлов, которые разбираются как таблицы.
 SPREADSHEET_KINDS: frozenset[str] = frozenset({"xlsx", "xlsm", "xls", "csv", "ods"})
@@ -290,7 +294,7 @@ class Pipeline:
 
         period = _folder_period(inside)
         if period:
-            analysis.metadata["period"] = period
+            analysis.metadata["period"] = _period_for_name(period, self.config)
 
         analysis.overall_confidence = compute_confidence(analysis)
         name, _dropped = build_filename(analysis, self.config)
@@ -312,12 +316,20 @@ class Pipeline:
         """
         series = detect_series([a.source_path for a in analyses])
         by_path = {a.source_path: a for a in analyses}
-        self._apply_scan_pages(analyses, skip=set(series))
+        # Слово «том» или «часть» в имени сказал человек — это разные части
+        # разных документов, и объединять их в одно имя нельзя. Голый номер
+        # чаще всего означает страницу, поэтому такие файлы сначала пробуются
+        # как пачка сканов.
+        labelled = {path for path, info in series.items() if info.label}
+        self._apply_scan_pages(analyses, skip=labelled)
         if not series:
             return
 
         groups: dict[tuple[Any, str, str], list[Path]] = {}
         for path, info in series.items():
+            analysis = by_path.get(path)
+            if analysis is not None and analysis.metadata.get("scan_page"):
+                continue
             key = (path.parent, info.base.casefold(), path.suffix.lower())
             groups.setdefault(key, []).append(path)
 
@@ -327,28 +339,27 @@ class Pipeline:
 
         for path, info in series.items():
             analysis = by_path.get(path)
-            if analysis is None:
+            if analysis is None or analysis.metadata.get("scan_page"):
                 continue
             analysis.metadata["series"] = info.to_dict()
             analysis.add_status(Status.SERIES_PART_DETECTED)
             self.finalize(analysis)
 
     def _apply_scan_pages(self, analyses: list[FileAnalysis], *, skip: set[Path]) -> None:
-        """Пронумеровать страницы подряд отснятого документа.
+        """Собрать подряд отснятые страницы в один документ.
 
-        Снимки делают один за другим, поэтому порядок страниц виден по номерам
-        камеры. Он и сохраняется в имени, а недостающие реквизиты берутся с той
-        страницы, где они пропечатались: на втором развороте паспорта слова
-        «паспорт» уже нет.
+        Восемь снимков одного иска — это один документ, а не восемь разных.
+        Поэтому вся пачка получает одно имя, взятое с той страницы, где
+        реквизиты пропечатались, и различается только номером страницы.
 
-        Пачкой страниц группа признаётся только по содержимому: подряд снятые
-        кадры отпуска нумеруются точно так же, но документом не являются.
+        Пачкой страниц группа признаётся по содержимому: подряд снятые кадры
+        отпуска нумеруются точно так же, но документом не являются.
         """
         candidates = [
             a
             for a in analyses
             if a.source_path not in skip
-            and (a.category is Category.IMAGE or a.detected_type == "pdf")
+            and (a.category is Category.IMAGE or a.detected_type in SCANNED_PAGE_KINDS)
         ]
         if len(candidates) < 2:
             return
@@ -357,18 +368,17 @@ class Pipeline:
             return
         by_path = {a.source_path: a for a in candidates}
 
-        groups: dict[tuple[Any, str, str], list[tuple[Path, ScanPage]]] = {}
+        groups: dict[str, list[tuple[Path, ScanPage]]] = {}
         for path, page in pages.items():
-            key = (path.parent, path.suffix.lower(), page.prefix)
-            groups.setdefault(key, []).append((path, page))
+            groups.setdefault(page.group, []).append((path, page))
 
         for members in groups.values():
             members.sort(key=lambda item: item[1].page)
             group = [by_path[path] for path, _ in members if path in by_path]
-            if not self._looks_like_scanned_document(group):
+            if not self._looks_like_scanned_document(group, members[0][1]):
                 continue
             self._share_scan_facts(group)
-            for (path, page) in members:
+            for path, page in members:
                 analysis = by_path.get(path)
                 if analysis is None:
                     continue
@@ -381,28 +391,90 @@ class Pipeline:
                 self.finalize(analysis)
 
     def _share_scan_facts(self, group: list[FileAnalysis]) -> None:
-        """Распространить узнанное с титульной страницы на остальные."""
+        """Дать всей пачке одно имя — то, что стоит на титульной странице.
+
+        На второй и последующих страницах шапки нет, зато есть случайные
+        фамилии и суммы из текста. Если позволить каждой странице назваться
+        самой, восемь листов одного иска получат восемь разных имён. Поэтому
+        реквизиты берутся у самой содержательной страницы и распространяются
+        на всю пачку — с указанием файла-источника (раздел 63 ТЗ).
+        """
         for analysis in group:
             # «Фото» — это подпись категории, а не вид документа: она не должна
-            # мешать настоящему названию перейти с первой страницы.
+            # мешать настоящему названию перейти с титульной страницы.
             if analysis.metadata.get("category_label_type"):
                 analysis.document_type = None
-        self._share_series_facts(group, {})
-        donor = max(
-            (a for a in group if a.main_persons),
-            key=lambda a: a.main_persons[0].confidence,
-            default=None,
-        )
+
+        donor = self._scan_donor(group)
         if donor is None:
             return
         for analysis in group:
-            if analysis is donor or analysis.main_persons:
+            if analysis is donor:
                 continue
+            for attribute in (
+                "document_type",
+                "document_date",
+                "document_number",
+                "subject",
+            ):
+                source_field: Field | None = getattr(donor, attribute)
+                if source_field is None or not source_field.accepted:
+                    setattr(analysis, attribute, None)
+                    continue
+                setattr(
+                    analysis,
+                    attribute,
+                    Field(
+                        value=source_field.value,
+                        source=source_field.source,
+                        evidence=f"из файла «{donor.source_path.name}»: {source_field.evidence}",
+                        confidence=round(source_field.confidence * 0.95, 4),
+                    ),
+                )
             analysis.main_persons = list(donor.main_persons)
+            analysis.main_organizations = list(donor.main_organizations)
+            analysis.case_numbers = list(donor.case_numbers)
+            analysis.metadata["scan_facts_from"] = donor.source_path.name
+            if donor.metadata.get("document_type_canonical"):
+                analysis.metadata["document_type_canonical"] = donor.metadata[
+                    "document_type_canonical"
+                ]
+            analysis.metadata.pop("document_type_default", None)
 
     @staticmethod
-    def _looks_like_scanned_document(group: list[FileAnalysis]) -> bool:
-        """Похожа ли пачка снимков на страницы одного документа."""
+    def _scan_donor(group: list[FileAnalysis]) -> FileAnalysis | None:
+        """Страница, по которой называется вся пачка.
+
+        Титульный лист содержательнее прочих, поэтому при равных признаках
+        побеждает страница, идущая первой.
+        """
+
+        def weight(analysis: FileAnalysis) -> tuple[int, int, int, float, int]:
+            page = analysis.metadata.get("scan_page") or {}
+            own_type = (
+                analysis.document_type is not None
+                and analysis.document_type.accepted
+                and analysis.document_type.source is Source.TEXT
+                and not analysis.metadata.get("category_label_type")
+            )
+            return (
+                int(own_type),
+                int(bool(analysis.main_persons or analysis.main_organizations)),
+                int(analysis.document_date is not None),
+                analysis.overall_confidence,
+                -int(page.get("page", 0) or 0),
+            )
+
+        return max(group, key=weight, default=None)
+
+    @staticmethod
+    def _looks_like_scanned_document(group: list[FileAnalysis], first: ScanPage) -> bool:
+        """Похожа ли пачка на страницы одного документа.
+
+        Достаточное основание — текст на большинстве страниц вместе с одним из
+        двух признаков: узнанный вид документа или нумерация с первой страницы.
+        Кадры отпуска не проходят ни по одному: текста в них нет.
+        """
         if len(group) < 2:
             return False
         recognized = sum(
@@ -415,7 +487,21 @@ class Pipeline:
         with_text = sum(
             1 for a in group if len(a.read_result.text if a.read_result else "") > 40
         )
-        return recognized >= 1 and with_text >= len(group) / 2
+        if with_text < len(group) / 2:
+            return False
+        own_types = {
+            str(a.document_type.value)
+            for a in group
+            if a.document_type is not None
+            and a.document_type.accepted
+            and a.document_type.source is Source.TEXT
+            and not a.metadata.get("category_label_type")
+        }
+        if len(own_types) > 1:
+            # Разные виды документов в одной пачке — это разные документы,
+            # пронумерованные подряд, а не страницы одного.
+            return False
+        return recognized >= 1 or first.numbered_from_one
 
     def _share_series_facts(
         self, group: list[FileAnalysis], series: dict[Path, Any]
@@ -1115,6 +1201,13 @@ def _table_period(text: str) -> str:
     if first[:7] == last[:7]:
         return ""
     return first[:4] if first[:4] == last[:4] else f"{first[:4]}-{last[:4]}"
+
+
+def _period_for_name(period: str, config: Config) -> str:
+    """Записать период так же, как записываются все прочие даты."""
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", period):
+        return format_date_for_name(period, config.naming.date_format)
+    return period
 
 
 def _folder_period(children: list[FileAnalysis]) -> str:

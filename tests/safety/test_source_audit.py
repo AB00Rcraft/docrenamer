@@ -26,7 +26,9 @@ OS_REPLACE_ALLOWED = {"config.py"}
 
 #: Модули, которым разрешено удалять файлы. Все они работают либо во временном
 #: каталоге, либо снимают старую ссылку на уже сохранённое содержимое.
-DELETE_ALLOWED = {"temp_cleanup.py", "config.py", "rename.py"}
+#: «learning.py» удаляет только собственный служебный журнал программы
+#: в её папке logs — пользовательских файлов он не касается.
+DELETE_ALLOWED = {"temp_cleanup.py", "config.py", "rename.py", "learning.py"}
 
 DELETE_FUNCS = {"unlink", "remove", "rmtree", "rmdir", "removedirs"}
 WRITE_MODES = {"w", "wb", "w+", "wb+", "a", "ab", "r+", "rb+", "x", "xb"}

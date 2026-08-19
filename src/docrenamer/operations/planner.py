@@ -15,6 +15,11 @@ from typing import Any
 
 from docrenamer.config import Config, write_json_atomic
 from docrenamer.naming.collision import fold, resolve_collision
+from docrenamer.naming.sanitizer import (
+    normalize_extension,
+    sanitize_component,
+    sanitize_filename,
+)
 from docrenamer.operations.hashing import HashError, sha256_file
 from docrenamer.types import FileAnalysis, PlanItem, Status, utcstamp
 
@@ -377,3 +382,65 @@ def verify_plan_item(item: PlanItem) -> tuple[bool, str, str]:
             "Время изменения файла отличается от зафиксированного в плане.",
         )
     return True, Status.OK.value, ""
+
+
+def set_manual_name(plan: RenamePlan, item: PlanItem, name: str) -> tuple[bool, str]:
+    """Заменить предложенное имя тем, что ввёл человек (раздел 79 ТЗ).
+
+    Программа предлагает, решает человек. Введённое имя проходит те же
+    проверки, что и собранное автоматически: запрещённые символы убираются,
+    расширение сохраняется, совпадение с другим файлом не допускается.
+
+    Returns:
+        ``(принято, сообщение)``.
+    """
+    text = (name or "").strip()
+    if not text:
+        return False, "Имя не может быть пустым."
+
+    suffix = item.source_path.suffix
+    stem = text
+    if not item.is_folder:
+        entered = Path(text)
+        if entered.suffix.lower() == suffix.lower():
+            stem = entered.stem
+        elif entered.suffix and entered.suffix.lower() != suffix.lower():
+            return False, f"Расширение менять нельзя: у файла оно «{suffix}»."
+
+    if item.is_folder:
+        cleaned = sanitize_component(stem, keep_spaces=True)
+        if not cleaned:
+            return False, "В имени не осталось допустимых символов."
+    else:
+        cleaned_name = sanitize_filename(stem, suffix, keep_spaces=True)
+        cleaned = Path(cleaned_name).stem
+
+    target_name = cleaned if item.is_folder else f"{cleaned}{normalize_extension(suffix)}"
+    if target_name == item.source_path.name:
+        item.proposed_filename = target_name
+        item.target_path = item.source_path
+        item.status = Status.NAME_UNCHANGED.value
+        item.message = "Имя оставлено прежним."
+        item.selected = False
+        return True, "Имя оставлено прежним."
+
+    taken = {
+        fold(other.target_path.name)
+        for other in plan.items
+        if other is not item and other.target_path.parent == item.source_path.parent
+    }
+    if fold(target_name) in taken:
+        return False, "Такое имя уже занято другим файлом в этой папке."
+    existing = item.source_path.parent / target_name
+    if existing.exists() and existing != item.source_path:
+        return False, "Файл с таким именем в папке уже есть."
+
+    item.proposed_filename = target_name
+    item.target_path = item.source_path.parent / target_name
+    item.status = Status.OK.value
+    item.message = "Имя задано вручную."
+    item.selected = True
+    item.add_status(Status.MANUAL_NAME.value)
+    if item.analysis is not None:
+        item.analysis.metadata["manual_name"] = target_name
+    return True, f"Имя задано вручную: {target_name}"

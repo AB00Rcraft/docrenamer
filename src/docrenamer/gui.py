@@ -21,11 +21,18 @@ from typing import Any
 from docrenamer import __version__
 from docrenamer.app import Application, Cancelled
 from docrenamer.config import Config, load_config
+from docrenamer.learning import LearningLog
 from docrenamer.logging.manifest import find_incomplete_sessions
-from docrenamer.operations.planner import RenamePlan, build_plan
+from docrenamer.operations.planner import RenamePlan, build_plan, set_manual_name
 from docrenamer.paths import AppPaths, default_paths
-from docrenamer.presentation import format_plan_row, progress_label, row_tag
+from docrenamer.presentation import (
+    plan_row_label,
+    plan_row_values,
+    progress_label,
+    row_tag,
+)
 from docrenamer.security.subprocess_safe import hidden_process_options
+from docrenamer.types import PlanItem
 
 #: Тёмная нейтральная палитра с одним акцентным цветом.
 COLORS = {
@@ -107,14 +114,20 @@ TOOLTIPS: dict[str, str] = {
     "updates": "Проверить, вышла ли новая версия.\n"
                "Обновление выполняет отдельная программа: приложение,\n"
                "которое читает документы, в сеть не выходит.",
+    "edit_name": "Изменить предложенное имя вручную.\n"
+                 "То же самое делает двойной щелчок по имени и клавиша F2.",
+    "feedback": "Показать обезличенный отчёт о работе алгоритма имён\n"
+                "и, если согласитесь, открыть страницу его отправки.\n"
+                "Имён файлов, фамилий и текста документов в отчёте нет.",
     "readiness": "Готовность комплекта. Нажмите «Самопроверка» для подробностей.",
     "mode": "Анализ — только разобрать файлы.\n"
             "Предпросмотр — показать предлагаемые имена.\n"
             "Применить — переименовать по плану.",
     "recursive": "Обрабатывать файлы и во вложенных папках.",
-    "table": "Список файлов. Щёлкните по галочке, чтобы включить или исключить строку.\n"
-             "Работает и пробел на выбранной строке.\n"
-             "Выберите строку, чтобы увидеть полные имена ниже.",
+    "table": "Дерево файлов и папок: сначала корень, ниже — вложенные папки.\n"
+             "Щелчок по галочке включает или исключает строку; галочка на папке\n"
+             "распространяется на всё её содержимое.\n"
+             "Двойной щелчок по имени — правка вручную, пробел — отметка.",
     "select_all": "Отметить все файлы, для которых есть предложение.\n"
                   "Повторное нажатие снимает отметки.",
     "details": "Полные имена выбранного файла и причина решения.",
@@ -134,6 +147,14 @@ TOOLTIPS: dict[str, str] = {
                      "Ниже порога файл показывается, но не переименовывается.",
     "set_length": "Предельная длина имени файла в символах.",
 }
+
+
+def _resolved(path: Path) -> Path:
+    """Путь в сравнимом виде: без «..» и по возможности без ссылок."""
+    try:
+        return path.resolve()
+    except OSError:  # путь может быть недоступен — сравниваем как есть
+        return path
 
 
 class Tooltip:
@@ -181,6 +202,11 @@ class DocRenamerGUI:
         self.paths = paths
         self.directory: Path | None = initial_directory
         self.plan: RenamePlan | None = None
+        #: Узлы дерева для папок: путь → строка Treeview.
+        self.nodes: dict[Path, str] = {}
+        self.learning = LearningLog(
+            paths=paths, version=__version__, enabled=config.learning.enabled
+        )
         self.events: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.worker: threading.Thread | None = None
         self.app = Application(
@@ -465,13 +491,16 @@ class DocRenamerGUI:
 
         self.tree = ttk.Treeview(
             table,
-            columns=("mark", "current", "proposed", "confidence", "status"),
-            show="headings",
+            columns=("mark", "proposed", "confidence", "status"),
+            show="tree headings",
             selectmode="browse",
         )
+        # Колонка дерева показывает вложенность: сначала файлы корня, затем
+        # папка и её содержимое под ней — структуру видно без догадок.
+        self.tree.heading("#0", text="Файл или папка")
+        self.tree.column("#0", width=260, minwidth=140, stretch=False, anchor="w")
         columns: tuple[tuple[str, str, int, bool, bool], ...] = (
             ("mark", "✓", 40, True, False),
-            ("current", "Текущее имя", 220, False, False),
             ("proposed", "Предлагаемое имя", 420, False, True),
             ("confidence", "Уверенность", 110, True, False),
             ("status", "Состояние", 170, False, False),
@@ -493,7 +522,8 @@ class DocRenamerGUI:
         self.tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
 
         self.tree.bind("<space>", self._toggle_selected)
-        self.tree.bind("<Double-1>", self._toggle_selected)
+        self.tree.bind("<Double-1>", self._on_double_click)
+        self.tree.bind("<F2>", lambda _event: self._edit_selected_name())
         # Одиночный щелчок по колонке с галочкой переключает строку сразу.
         self.tree.bind("<Button-1>", self._on_click, add="+")
         self.tree.bind("<<TreeviewSelect>>", self._show_details)
@@ -600,9 +630,11 @@ class DocRenamerGUI:
         Tooltip(self.stop_button, TOOLTIPS["stop"])
 
         service = (
-            ("Самопроверка", self._selftest, "selftest", 5),
-            ("Журнал", self._open_logs, "logs", 6),
-            ("Настройки", self._open_settings, "settings", 7),
+            ("Изменить имя", self._edit_selected_name, "edit_name", 5),
+            ("Самопроверка", self._selftest, "selftest", 6),
+            ("Журнал", self._open_logs, "logs", 7),
+            ("Улучшение", self._send_feedback, "feedback", 8),
+            ("Настройки", self._open_settings, "settings", 9),
         )
         for text, command, key, column in service:
             button = ttk.Button(actions, text=text, width=BUTTON_WIDTH, command=command)
@@ -612,7 +644,7 @@ class DocRenamerGUI:
             updates = ttk.Button(
                 actions, text="Обновления", width=BUTTON_WIDTH, command=self._check_updates
             )
-            updates.grid(row=0, column=8, sticky="e", padx=(PAD_M, 0))
+            updates.grid(row=0, column=10, sticky="e", padx=(PAD_M, 0))
             Tooltip(updates, TOOLTIPS["updates"])
 
     def _set_details(self, text: str) -> None:
@@ -629,7 +661,12 @@ class DocRenamerGUI:
         selection = self.tree.selection()
         if not selection:
             return
-        item = self.plan.items[int(selection[0])]
+        try:
+            item = self.plan.items[int(selection[0])]
+        except (ValueError, IndexError):
+            # Строка-группа: своей строки плана у неё нет.
+            self._set_details("Папка показана для наглядности — переименование не предложено.")
+            return
         lines = [f"Сейчас:  {item.source_path.name}"]
         if item.is_rename:
             lines.append(f"Станет:  {item.proposed_filename}")
@@ -858,6 +895,56 @@ class DocRenamerGUI:
     def _open_settings(self) -> None:
         SettingsDialog(self.root, self.config, self.paths)
 
+    # --- отчёт об именах ---------------------------------------------------
+
+    def _send_feedback(self) -> None:
+        """Показать обезличенный отчёт и, с согласия человека, отправить его.
+
+        Отчёт — это статистика о работе алгоритма имён: сколько файлов какого
+        вида разобрано, где не хватило уверенности, какие имена пришлось
+        править руками. Ни имён файлов, ни фамилий, ни текста документов в нём
+        нет, и человек видит его целиком до отправки.
+        """
+        import subprocess
+
+        report = self.learning.build_report()
+        if not report.get("records"):
+            messagebox.showinfo(
+                "Отчёт об именах",
+                "Пока нечего отправлять: переименуйте файлы или исправьте\n"
+                "предложенные имена, и программа запомнит, где ошиблась.",
+            )
+            return
+        path = self.learning.save_report()
+        text = self.learning.report_text()
+        preview = text if len(text) <= 2000 else text[:2000] + "\n…"
+        agreed = messagebox.askyesno(
+            "Отчёт об именах",
+            "Будет открыта страница отправки отчёта в браузере.\n"
+            "Отправляется только это:\n\n"
+            f"{preview}\n\n"
+            f"Отчёт сохранён: {path}\n\nОткрыть страницу отправки?",
+        )
+        if not agreed:
+            self._log(f"Отчёт сохранён, отправка отменена: {path}")
+            return
+        command = self._updater_command(
+            ["--feedback", str(path), "--repository", self.config.update.repository]
+        )
+        if command is None:
+            messagebox.showinfo(
+                "Отчёт об именах",
+                f"Отчёт сохранён:\n{path}\n\nПриложите его к обращению вручную.",
+            )
+            return
+        try:
+            subprocess.Popen(  # noqa: S603 — список аргументов, без оболочки
+                command, **hidden_process_options()
+            )
+            self._log("Открыта страница отправки отчёта об именах.")
+        except (OSError, subprocess.SubprocessError) as exc:
+            messagebox.showerror("Отчёт об именах", f"Не удалось открыть страницу: {exc}")
+
     # --- обновления --------------------------------------------------------
 
     def _updater_command(self, arguments: list[str]) -> list[str] | None:
@@ -996,16 +1083,20 @@ class DocRenamerGUI:
     def _show_files(self, files: list[Any]) -> None:
         """Показать найденные файлы сразу после сканирования."""
         self.plan = None
+        self.nodes = {}
         self.tree.delete(*self.tree.get_children())
         self.tree.heading("confidence", text="Размер")
+        root = self.directory or (files[0].path.parent if files else Path("."))
         for index, scanned in enumerate(files):
             size = scanned.size / 1024
+            parent = self._folder_node(scanned.path.parent, root)
             self.tree.insert(
-                "",
+                parent,
                 "end",
                 iid=str(index),
+                text=scanned.path.name,
                 values=(
-                    scanned.path.name,
+                    "",
                     "—",
                     f"{size:.0f} КБ" if size < 1024 else f"{size / 1024:.1f} МБ",
                     "Найден",
@@ -1019,19 +1110,102 @@ class DocRenamerGUI:
 
     def _show_plan(self, plan: RenamePlan) -> None:
         self.plan = plan
+        self.nodes = {}
         self.tree.heading("confidence", text="Уверенность")
         self.tree.delete(*self.tree.get_children())
+
+        # Порядок показа: сначала файлы корня, затем папка и всё, что в ней.
+        # Дерево повторяет то, что человек видит в проводнике, и границу между
+        # корнем и вложенной папкой видно сразу.
+        root = _resolved(plan.root)
+        files_by_directory: dict[Path, list[tuple[int, PlanItem]]] = {}
+        folder_rows: dict[Path, str] = {}
         for index, item in enumerate(plan.items):
-            self.tree.insert(
-                "",
-                "end",
-                iid=str(index),
-                values=format_plan_row(item),
-                tags=(row_tag(item),),
-            )
+            if item.is_folder:
+                folder_rows[_resolved(item.source_path)] = str(index)
+                continue
+            directory = _resolved(item.source_path.parent)
+            files_by_directory.setdefault(directory, []).append((index, item))
+
+        children: dict[Path, set[Path]] = {}
+        for directory in set(files_by_directory) | set(folder_rows):
+            current = directory
+            while current != root and root in current.parents:
+                children.setdefault(current.parent, set()).add(current)
+                current = current.parent
+
+        def build(directory: Path) -> None:
+            parent = self._folder_node(directory, root, folder_rows)
+            for index, item in sorted(
+                files_by_directory.get(directory, []),
+                key=lambda pair: pair[1].source_path.name.casefold(),
+            ):
+                self.tree.insert(
+                    parent,
+                    "end",
+                    iid=str(index),
+                    text=plan_row_label(item),
+                    values=plan_row_values(item),
+                    tags=(row_tag(item),),
+                )
+            for subdirectory in sorted(
+                children.get(directory, ()), key=lambda path: path.name.casefold()
+            ):
+                build(subdirectory)
+
+        build(root)
+        for node in self.nodes.values():
+            self.tree.item(node, open=True)
         self._update_select_all_label()
         for key, value in plan.counters().items():
             self._log(f"{key}: {value}")
+
+    def _folder_node(
+        self,
+        directory: Path,
+        root: Path,
+        folder_rows: dict[Path, str] | None = None,
+    ) -> str:
+        """Узел дерева для папки; при необходимости создаётся вместе с верхними.
+
+        Папка, для которой есть строка плана, сама и служит узлом: её галочка
+        распространяется на всё содержимое. Для остальных создаётся простая
+        группа — она ничего не переименовывает, но показывает вложенность.
+        """
+        directory = _resolved(directory)
+        root = _resolved(root)
+        if directory == root or root not in directory.parents:
+            return ""
+        known = self.nodes.get(directory)
+        if known is not None:
+            return known
+        parent = self._folder_node(directory.parent, root, folder_rows)
+        row = (folder_rows or {}).get(directory)
+        if row is not None and self.plan is not None:
+            item = self.plan.items[int(row)]
+            self.tree.insert(
+                parent,
+                "end",
+                iid=row,
+                text=plan_row_label(item),
+                values=plan_row_values(item),
+                tags=(row_tag(item),),
+                open=True,
+            )
+            node = row
+        else:
+            node = f"dir:{directory}"
+            self.tree.insert(
+                parent,
+                "end",
+                iid=node,
+                text=f"📁 {directory.name}",
+                values=("", "—", "", "папка"),
+                tags=("warn",),
+                open=True,
+            )
+        self.nodes[directory] = node
+        return node
 
     def _clear_plan(self, reason: str) -> None:
         """Убрать список после операции: имена файлов уже изменились.
@@ -1040,6 +1214,7 @@ class DocRenamerGUI:
         содержимому папки.
         """
         self.plan = None
+        self.nodes = {}
         self.tree.delete(*self.tree.get_children())
         self._set_details(reason)
         self._log(reason)
@@ -1058,6 +1233,70 @@ class DocRenamerGUI:
         self._set_row_selected(row, toggle=True)
         return "break"
 
+    def _on_double_click(self, event: tk.Event) -> str:
+        """Двойной щелчок: по имени — правка, в остальном — отметка."""
+        if self.plan is None:
+            return "break"
+        column = self.tree.identify_column(event.x)
+        row = self.tree.identify_row(event.y)
+        if row and column == "#2":
+            self._edit_name(row)
+            return "break"
+        self._toggle_selected()
+        return "break"
+
+    def _edit_selected_name(self) -> str:
+        """Изменить имя выбранной строки (кнопка и клавиша F2)."""
+        selection = self.tree.selection()
+        if selection:
+            self._edit_name(selection[0])
+        elif self.plan is not None:
+            messagebox.showinfo(
+                "Изменение имени", "Выберите строку, имя которой нужно изменить."
+            )
+        return "break"
+
+    def _edit_name(self, row: str) -> None:
+        """Заменить предложенное имя на введённое человеком (раздел 79 ТЗ).
+
+        Программа предлагает, решает человек. Введённое имя проходит те же
+        проверки: запрещённые символы, длина, расширение, занятость имени.
+        """
+        from tkinter import simpledialog
+
+        if self.plan is None:
+            return
+        try:
+            item = self.plan.items[int(row)]
+        except (ValueError, IndexError):
+            return
+        current = item.proposed_filename or item.source_path.name
+        answer = simpledialog.askstring(
+            "Изменение имени",
+            f"Сейчас:  {item.source_path.name}\n\nНовое имя:",
+            initialvalue=current,
+            parent=self.root,
+        )
+        if answer is None:
+            return
+        before = item.proposed_filename
+        accepted, message = set_manual_name(self.plan, item, answer)
+        if not accepted:
+            messagebox.showwarning("Изменение имени", message)
+            return
+        self.tree.item(
+            row,
+            text=plan_row_label(item),
+            values=plan_row_values(item),
+            tags=(row_tag(item),),
+        )
+        self._update_select_all_label()
+        self._show_details()
+        self._log(f"{item.source_path.name}: {message}")
+        # Правка руками — самый ценный отзыв об алгоритме: программа
+        # запоминает обезличенную суть исправления (раздел 63 ТЗ).
+        self.learning.record_edit(item, proposed=before, chosen=item.proposed_filename)
+
     def _toggle_selected(self, _event: object = None) -> str:
         """Включить или исключить строку плана (раздел 79 ТЗ)."""
         if self.plan is None:
@@ -1068,18 +1307,61 @@ class DocRenamerGUI:
         return "break"
 
     def _set_row_selected(self, row: str, *, toggle: bool = False, value: bool = False) -> None:
-        """Обновить отметку строки и её вид."""
+        """Обновить отметку строки и её вид.
+
+        Отметка на папке распространяется на всё, что внутри: одним нажатием
+        можно и взять целиком, и исключить целиком, чтобы заняться папкой
+        отдельно.
+        """
         if self.plan is None:
             return
+        children = self.tree.get_children(row)
         try:
             item = self.plan.items[int(row)]
         except (ValueError, IndexError):
+            # Строка-группа: своего переименования нет, но содержимое отметить
+            # всё равно нужно.
+            if children:
+                target = value if not toggle else not self._subtree_selected(row)
+                for child in children:
+                    self._set_row_selected(child, value=target)
+                self._update_select_all_label()
             return
+        if not item.is_rename and not children:
+            return
+        if item.is_rename:
+            item.selected = (not item.selected) if toggle else value
+        if children:
+            target = item.selected
+            if not item.is_rename:
+                target = (not self._subtree_selected(row)) if toggle else value
+            for child in children:
+                self._set_row_selected(child, value=target)
         if not item.is_rename:
+            self._update_select_all_label()
             return
-        item.selected = (not item.selected) if toggle else value
-        self.tree.item(row, values=format_plan_row(item), tags=(row_tag(item),))
+        self.tree.item(
+            row,
+            text=plan_row_label(item),
+            values=plan_row_values(item),
+            tags=(row_tag(item),),
+        )
         self._update_select_all_label()
+
+    def _subtree_selected(self, row: str) -> bool:
+        """Отмечено ли всё внутри строки-группы."""
+        if self.plan is None:
+            return False
+        marked: list[bool] = []
+        for child in self.tree.get_children(row):
+            try:
+                item = self.plan.items[int(child)]
+            except (ValueError, IndexError):
+                marked.append(self._subtree_selected(child))
+                continue
+            if item.is_rename:
+                marked.append(item.selected)
+        return bool(marked) and all(marked)
 
     def _toggle_all(self) -> None:
         """Отметить или снять все строки, которые можно переименовать."""
