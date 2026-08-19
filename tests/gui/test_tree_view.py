@@ -186,28 +186,86 @@ def test_selecting_row_fills_card(gui, workdir: Path) -> None:  # type: ignore[n
     assert "Иск_12.05.2026.pdf" in card
 
 
-def test_merge_dialog_selects_pages(gui, workdir: Path) -> None:  # type: ignore[no-untyped-def]
-    """Окно объединения показывает файлы и возвращает отмеченные мышью."""
+def make_dialog(gui, workdir: Path, names=("скан 1.jpg", "скан 2.jpg", "скан 3.jpg"), **kwargs):  # type: ignore[no-untyped-def]
     from docrenamer.gui import MergeDialog
 
     items = []
-    for number in range(1, 4):
-        path = workdir / f"скан {number}.jpg"
+    for name in names:
+        path = workdir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"\xff\xd8\xff\xe0")
         items.append(make_item(path, path.name))
+    return MergeDialog(gui.root, items, **kwargs), items
 
-    dialog = MergeDialog(gui.root, items, suggestion="Иск Шахмановой")
+
+def test_merge_dialog_toggles_by_click(gui, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    """Щелчок по строке ставит и снимает отметку, а не сбрасывает остальные."""
+    dialog, _items = make_dialog(gui, workdir)
     try:
-        assert dialog.listbox.size() == 3
-        # По умолчанию отмечены все: обычно объединяют всю пачку.
         assert len(dialog.selected_items()) == 3
-        dialog.listbox.selection_clear(0, "end")
-        dialog.listbox.selection_set(0, 1)
+
+        dialog._set_mark("0", False)
+        assert [item.source_path.name for item in dialog.selected_items()] == [
+            "скан 2.jpg",
+            "скан 3.jpg",
+        ]
+
+        dialog._mark_all(False)
+        assert dialog.selected_items() == []
+        dialog._mark_all(True)
+        assert len(dialog.selected_items()) == 3
+    finally:
+        dialog.window.destroy()
+
+
+def test_merge_dialog_removes_rows(gui, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    """Лишний файл убирается из списка и в объединение не попадает."""
+    dialog, _items = make_dialog(gui, workdir)
+    try:
+        dialog.tree.selection_set("1")
+        dialog._remove_rows()
+
         assert [item.source_path.name for item in dialog.selected_items()] == [
             "скан 1.jpg",
-            "скан 2.jpg",
+            "скан 3.jpg",
         ]
-        assert dialog.name_var.get() == "Иск Шахмановой"
+    finally:
+        dialog.window.destroy()
+
+
+def test_merge_dialog_adds_files(gui, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    """Файл, не попавший в разбор, добавляется в список вручную."""
+    from docrenamer.operations.planner import make_plan_item
+
+    extra = workdir / "скан 4.jpg"
+    extra.write_bytes(b"\xff\xd8\xff\xe0")
+    dialog, _items = make_dialog(
+        gui, workdir, on_add=lambda path: make_plan_item(path, config=gui.config)
+    )
+    try:
+        item = dialog.on_add(extra)
+        assert item is not None
+        dialog.items.append(item)
+        dialog.added.append(item)
+        dialog._insert(item, marked=True)
+
+        assert "скан 4.jpg" in [i.source_path.name for i in dialog.selected_items()]
+    finally:
+        dialog.window.destroy()
+
+
+def test_merge_dialog_opens_over_the_window(gui, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    """Окно открывается над окном программы, а не в углу экрана."""
+    gui.root.update_idletasks()
+    dialog, _items = make_dialog(gui, workdir)
+    try:
+        dialog.window.update_idletasks()
+        left = dialog.window.winfo_x()
+        top = dialog.window.winfo_y()
+
+        assert left >= gui.root.winfo_rootx() - 1
+        assert top >= gui.root.winfo_rooty() - 1
+        assert left <= gui.root.winfo_rootx() + gui.root.winfo_width()
     finally:
         dialog.window.destroy()
 
@@ -253,7 +311,8 @@ def test_merge_dialog_labels_folders(gui, workdir: Path) -> None:  # type: ignor
 
     dialog = MergeDialog(gui.root, items, root=workdir)
     try:
-        labels = [dialog.listbox.get(index) for index in range(dialog.listbox.size())]
-        assert labels == ["1.jpg", "Дело\\2.jpg"], labels
+        labels = [dialog.tree.item(row, "values")[1] for row in dialog.tree.get_children("")]
+        assert labels[0] == "1.jpg"
+        assert labels[1].endswith("2.jpg") and "Дело" in labels[1], labels
     finally:
         dialog.window.destroy()

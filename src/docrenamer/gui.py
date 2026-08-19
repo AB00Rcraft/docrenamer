@@ -27,6 +27,7 @@ from docrenamer.logging.manifest import find_incomplete_sessions
 from docrenamer.operations.planner import (
     RenamePlan,
     build_plan,
+    make_plan_item,
     merge_as_document,
     set_manual_name,
 )
@@ -321,9 +322,11 @@ class MergeDialog:
     """Выбор файлов, которые надо считать страницами одного документа.
 
     Отмечать страницы в общем списке неудобно: они перемешаны с папками и
-    другими документами. Поэтому по команде открывается отдельное окно, где
-    видны только файлы, и нужные отмечаются мышью — протяжкой, с Shift или с
-    Ctrl. Если файлы лежат в разных папках, у каждого написано, где он: одним
+    другими документами. Поэтому по команде открывается отдельное окно —
+    посреди окна программы, а не в углу экрана.
+
+    Список в нём редактируемый: щелчок отмечает и снимает отметку, лишние
+    строки убираются, а недостающие файлы добавляются с диска. Одним
     документом могут быть только страницы из одной папки.
     """
 
@@ -335,23 +338,27 @@ class MergeDialog:
         preselected: list[PlanItem] | None = None,
         suggestion: str = "",
         root: Path | None = None,
+        on_add: Callable[[Path], PlanItem | None] | None = None,
     ) -> None:
-        self.items = items
+        self.items = list(items)
         self.root_directory = root
+        self.on_add = on_add
+        self.added: list[PlanItem] = []
         self.result: tuple[list[PlanItem], str] | None = None
+        self._marks: dict[str, bool] = {}
 
         self.window = tk.Toplevel(parent)
-        self.window.title("Один документ")
+        self.window.title("Объединить в один документ")
         self.window.configure(bg=COLORS["bg"])
-        self.window.transient(parent if isinstance(parent, tk.Wm) else None)
+        self.window.transient(parent.winfo_toplevel())
         self.window.columnconfigure(0, weight=1)
         self.window.rowconfigure(1, weight=1)
 
         ttk.Label(
             self.window,
             text=(
-                "Отметьте страницы одного документа — мышью, с Shift или Ctrl.\n"
-                "Они получат общее имя и номера страниц по порядку."
+                "Отметьте страницы одного документа: щелчок по строке ставит и\n"
+                "снимает отметку. Лишние файлы можно убрать, недостающие — добавить."
             ),
             style="Muted.TLabel",
             justify="left",
@@ -361,36 +368,40 @@ class MergeDialog:
         frame.grid(row=1, column=0, sticky="nsew", padx=PAD_L)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
-        self.listbox = tk.Listbox(
-            frame,
-            selectmode="extended",
-            activestyle="none",
-            bg=COLORS["field"],
-            fg=COLORS["text"],
-            selectbackground=COLORS["accent"],
-            selectforeground=COLORS["accent_text"],
-            font=FONT_MONO,
-            relief="flat",
-            highlightthickness=0,
-            height=14,
+        self.tree = ttk.Treeview(
+            frame, columns=("mark", "file"), show="headings", selectmode="extended", height=14
         )
-        self.listbox.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(frame, orient="vertical", command=self.listbox.yview)
+        self.tree.heading("mark", text="✓")
+        self.tree.column("mark", width=36, minwidth=36, stretch=False, anchor="center")
+        self.tree.heading("file", text="Файл")
+        self.tree.column("file", width=420, minwidth=220, stretch=True, anchor="w")
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
         scroll.grid(row=0, column=1, sticky="ns")
-        self.listbox.configure(yscrollcommand=scroll.set)
-        folders = {item.source_path.parent for item in items}
-        for item in items:
-            self.listbox.insert("end", self._label(item, show_folder=len(folders) > 1))
+        self.tree.configure(yscrollcommand=scroll.set)
+        self.tree.bind("<Button-1>", self._on_click, add="+")
+        self.tree.bind("<space>", lambda _event: self._toggle_selected_rows())
 
         chosen = {item.source_path for item in preselected or []}
-        for index, item in enumerate(items):
-            if item.source_path in chosen:
-                self.listbox.selection_set(index)
-        if not chosen:
-            self.listbox.selection_set(0, "end")
+        for item in self.items:
+            self._insert(item, marked=not chosen or item.source_path in chosen)
+
+        edit = ttk.Frame(self.window)
+        edit.grid(row=2, column=0, sticky="w", padx=PAD_L, pady=(PAD_S, 0))
+        for column, (text, command) in enumerate(
+            (
+                ("Отметить все", lambda: self._mark_all(True)),
+                ("Снять все", lambda: self._mark_all(False)),
+                ("Добавить файлы…", self._add_files),
+                ("Убрать из списка", self._remove_rows),
+            )
+        ):
+            ttk.Button(edit, text=text, width=BUTTON_WIDTH + 3, command=command).grid(
+                row=0, column=column, padx=(0, PAD_S)
+            )
 
         name_row = ttk.Frame(self.window)
-        name_row.grid(row=2, column=0, sticky="ew", padx=PAD_L, pady=(PAD_M, 0))
+        name_row.grid(row=3, column=0, sticky="ew", padx=PAD_L, pady=(PAD_M, 0))
         name_row.columnconfigure(1, weight=1)
         ttk.Label(name_row, text="Общее имя:").grid(row=0, column=0, sticky="w")
         self.name_var = tk.StringVar(value=suggestion)
@@ -398,7 +409,7 @@ class MergeDialog:
         entry.grid(row=0, column=1, sticky="ew", padx=(PAD_M, 0))
 
         buttons = ttk.Frame(self.window)
-        buttons.grid(row=3, column=0, sticky="e", padx=PAD_L, pady=PAD_L)
+        buttons.grid(row=4, column=0, sticky="e", padx=PAD_L, pady=PAD_L)
         ttk.Button(
             buttons, text="Отмена", width=BUTTON_WIDTH, command=self._cancel
         ).grid(row=0, column=0)
@@ -413,6 +424,34 @@ class MergeDialog:
         self.window.bind("<Escape>", lambda _event: self._cancel())
         self.window.bind("<Return>", lambda _event: self._accept())
         entry.focus_set()
+        self._center_over(parent)
+
+    # --- размещение ---------------------------------------------------------
+
+    def _center_over(self, parent: tk.Misc) -> None:
+        """Поставить окно посреди окна программы, а не в углу экрана."""
+        self.window.update_idletasks()
+        top = parent.winfo_toplevel()
+        width = self.window.winfo_reqwidth()
+        height = self.window.winfo_reqheight()
+        left = top.winfo_rootx() + max(0, (top.winfo_width() - width) // 2)
+        upper = top.winfo_rooty() + max(0, (top.winfo_height() - height) // 3)
+        self.window.geometry(f"+{max(0, left)}+{max(0, upper)}")
+
+    # --- список -------------------------------------------------------------
+
+    def _insert(self, item: PlanItem, *, marked: bool) -> str:
+        """Добавить строку файла в список окна."""
+        folders = {other.source_path.parent for other in self.items}
+        row = str(len(self._marks))
+        self._marks[row] = marked
+        self.tree.insert(
+            "",
+            "end",
+            iid=row,
+            values=("☑" if marked else "☐", self._label(item, show_folder=len(folders) > 1)),
+        )
+        return row
 
     def _label(self, item: PlanItem, *, show_folder: bool) -> str:
         """Подпись файла в списке: с папкой, когда папок несколько."""
@@ -424,13 +463,88 @@ class MergeDialog:
                 directory = directory.relative_to(self.root_directory)
             except ValueError:
                 pass
-        return f"{directory}\\{item.source_path.name}" if str(directory) != "." else (
-            item.source_path.name
-        )
+        if str(directory) == ".":
+            return item.source_path.name
+        return f"{directory}{os.sep}{item.source_path.name}"
+
+    def _row_items(self) -> list[tuple[str, PlanItem]]:
+        """Строки окна вместе с их файлами, в показанном порядке."""
+        pairs: list[tuple[str, PlanItem]] = []
+        for row in self.tree.get_children(""):
+            index = int(row)
+            if index < len(self.items):
+                pairs.append((row, self.items[index]))
+        return pairs
 
     def selected_items(self) -> list[PlanItem]:
-        """Отмеченные в окне файлы — в том порядке, в каком они показаны."""
-        return [self.items[index] for index in self.listbox.curselection()]
+        """Отмеченные файлы — в том порядке, в каком они показаны."""
+        return [item for row, item in self._row_items() if self._marks.get(row)]
+
+    def _set_mark(self, row: str, value: bool) -> None:
+        self._marks[row] = value
+        values = list(self.tree.item(row, "values"))
+        values[0] = "☑" if value else "☐"
+        self.tree.item(row, values=values)
+
+    def _on_click(self, event: tk.Event) -> str | None:
+        """Щелчок по строке ставит и снимает отметку."""
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return None
+        row = self.tree.identify_row(event.y)
+        if not row:
+            return None
+        self._set_mark(row, not self._marks.get(row, False))
+        return "break"
+
+    def _toggle_selected_rows(self) -> None:
+        for row in self.tree.selection():
+            self._set_mark(row, not self._marks.get(row, False))
+
+    def _mark_all(self, value: bool) -> None:
+        for row in self.tree.get_children(""):
+            self._set_mark(row, value)
+
+    def _remove_rows(self) -> None:
+        """Убрать выделенные строки из списка окна.
+
+        Сами файлы это не трогает: они просто не участвуют в объединении.
+        """
+        rows = self.tree.selection() or [
+            row for row in self.tree.get_children("") if not self._marks.get(row)
+        ]
+        for row in rows:
+            self.tree.delete(row)
+            self._marks.pop(row, None)
+
+    def _add_files(self) -> None:
+        """Добавить в список файлы с диска.
+
+        Пригождается, когда нужная страница не попала в разбор: например, это
+        снимок, который программа сочла служебным, или файл, добавленный в
+        папку уже после сканирования.
+        """
+        if self.on_add is None:
+            return
+        known = {item.source_path for item in self.items}
+        directory = next(iter({item.source_path.parent for item in self.items}), None)
+        chosen = filedialog.askopenfilenames(
+            parent=self.window,
+            title="Добавить файлы к документу",
+            initialdir=str(directory) if directory else None,
+        )
+        for raw in chosen or ():
+            path = Path(raw)
+            if path in known or not path.is_file():
+                continue
+            item = self.on_add(path)
+            if item is None:
+                continue
+            self.items.append(item)
+            self.added.append(item)
+            known.add(path)
+            self._insert(item, marked=True)
+
+    # --- решение ------------------------------------------------------------
 
     def _accept(self) -> None:
         chosen = self.selected_items()
@@ -445,7 +559,7 @@ class MergeDialog:
             messagebox.showinfo(
                 "Один документ",
                 "Страницы одного документа должны лежать в одной папке.\n"
-                "Оставьте отмеченными файлы только из одной папки.",
+                "Снимите отметки с файлов из других папок.",
                 parent=self.window,
             )
             return
@@ -1696,20 +1810,42 @@ class DocRenamerGUI:
             preselected=preselected,
             suggestion=self._merge_suggestion(preselected or candidates),
             root=self.plan.root,
+            on_add=self._plan_item_for,
         )
         answer = dialog.show()
         if answer is None:
             return
         pages, name = answer
-        accepted, message = merge_as_document(self.plan, pages, name)
+        # Файлы, добавленные в окне вручную, становятся частью плана: иначе
+        # переименовать их будет нечем.
+        plan = self.plan
+        for item in dialog.added:
+            if item in pages:
+                plan.items.append(item)
+        accepted, message = merge_as_document(plan, pages, name)
         if not accepted:
+            # Объединение не состоялось — добавленные строки в плане не нужны.
+            plan.items = [item for item in plan.items if item not in dialog.added]
             messagebox.showwarning("Один документ", message)
             return
-        self._refresh_rows(pages)
+        if dialog.added:
+            # Список получил новые строки — проще перерисовать его целиком.
+            self._show_plan(plan)
+        else:
+            self._refresh_rows(pages)
         self._update_select_all_label()
         self._log(message)
         for item in pages:
             self.learning.record_plan_item(item, event="merged")
+
+    def _plan_item_for(self, path: Path) -> PlanItem | None:
+        """Строка плана для файла, добавленного человеком вручную."""
+        if self.plan is None:
+            return None
+        for item in self.plan.items:
+            if item.source_path == path:
+                return item
+        return make_plan_item(path, config=self.config)
 
     def _show_row_menu(self, event: tk.Event) -> str | None:
         """Показать меню для строки под указателем."""

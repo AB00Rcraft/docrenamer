@@ -520,3 +520,36 @@ def _page_order(path: Path) -> tuple[int, str]:
         if match is not None:
             return int(match.group("num")), stem.casefold()
     return 10**6, stem.casefold()
+
+
+
+def make_plan_item(path: Path, *, config: Config) -> PlanItem | None:
+    """Строка плана для файла, которого в плане ещё нет.
+
+    Нужна, когда человек добавляет страницу вручную: файл мог не попасть в
+    разбор (например, программа сочла его служебным) или появиться в папке
+    после сканирования. Содержимое читается только ради контрольной суммы —
+    она понадобится при переименовании.
+    """
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    if not path.is_file():
+        return None
+    try:
+        digest = sha256_file(path)
+    except HashError:
+        return None
+    return PlanItem(
+        source_path=path,
+        target_path=path,
+        proposed_filename=path.name,
+        sha256=digest,
+        size=stat.st_size,
+        mtime=stat.st_mtime,
+        confidence=0.0,
+        selected=False,
+        status=Status.NAME_UNCHANGED.value,
+        message="Файл добавлен вручную.",
+    )
