@@ -129,6 +129,11 @@ class NamingConfig:
     max_persons_in_filename: int = 2
     max_organizations_in_filename: int = 1
     confidence_threshold: float = 0.88
+    #: Порог для папок. Ниже, чем для файлов, и это осознанно: у папки нет ни
+    #: своего текста, ни своей даты, зато повторение одного человека или
+    #: номера дела в нескольких файлах — сильный довод. Переименование папки
+    #: к тому же откатывается вместе с остальной сессией.
+    folder_confidence_threshold: float = 0.72
     separator: str = "_"
     allow_filesystem_date_fallback: bool = True
     preserve_good_names: bool = True
@@ -155,6 +160,11 @@ class NamingConfig:
         if "max_organizations_in_filename" in data:
             cfg.max_organizations_in_filename = _as_int(
                 data["max_organizations_in_filename"], "naming.max_organizations_in_filename", 0, 10
+            )
+        if "folder_confidence_threshold" in data:
+            name = "naming.folder_confidence_threshold"
+            cfg.folder_confidence_threshold = _clamp(
+                data["folder_confidence_threshold"], 0.0, 1.0, name
             )
         if "confidence_threshold" in data:
             cfg.confidence_threshold = _clamp(

@@ -76,6 +76,10 @@ SCANNED_PAGE_KINDS: frozenset[str] = frozenset({"pdf", "tiff", "tif"})
 #: Виды файлов, которые разбираются как таблицы.
 SPREADSHEET_KINDS: frozenset[str] = frozenset({"xlsx", "xlsm", "xls", "csv", "ods"})
 
+#: Как называется папка, в которой лежат разные виды документов одного дела
+#: или одного человека.
+MIXED_FOLDER_LABEL = "Документы"
+
 #: Если вид документа определить не удалось, имя всё равно начинается с
 #: обозначения вида: первое слово имени — это то, что человек ищет глазами.
 DEFAULT_DOCUMENT_LABEL = "Документ"
@@ -235,23 +239,38 @@ class Pipeline:
             analysis.add_status(Status.EMPTY_DOCUMENT)
             return analysis
 
+        # Нейтральные подписи вроде «Документ» или «Фото» о содержимом папки
+        # ничего не говорят: считаем только настоящие виды документов.
+        neutral = set(FILE_KIND_LABELS.values()) | {
+            DEFAULT_DOCUMENT_LABEL,
+            *CATEGORY_LABELS.values(),
+            "Скан",
+        }
         types = Counter(
             str(child.document_type.value)
             for child in inside
-            if child.document_type is not None and child.document_type.accepted
+            if child.document_type is not None
+            and child.document_type.accepted
+            and str(child.document_type.value) not in neutral
+            and not child.metadata.get("category_label_type")
+            and not child.metadata.get("document_type_default")
         )
+        share = 0.0
+        label, count = "", 0
         if types:
             label, count = types.most_common(1)[0]
             share = count / len(inside)
-            # Вид папки называем, только если он преобладает: смешанную папку
-            # нельзя назвать по одному документу из десяти.
-            if share >= 0.5:
-                analysis.document_type = Field(
-                    value=label,
-                    source=Source.METADATA,
-                    evidence=f"{count} из {len(inside)} файлов — {label}",
-                    confidence=min(0.95, 0.6 + share * 0.35),
-                )
+        # Вид папки называем, только если он явно преобладает: смешанную папку
+        # нельзя назвать по одному документу из десяти. Но и молчать не за чем:
+        # у папки с паспортом, иском и снимками одного человека общее название
+        # есть — «Документы» этого человека.
+        if types and share >= 0.6:
+            analysis.document_type = Field(
+                value=label,
+                source=Source.METADATA,
+                evidence=f"{count} из {len(inside)} файлов — {label}",
+                confidence=min(0.95, 0.6 + share * 0.35),
+            )
 
         people = Counter(
             person.name for child in inside for person in child.main_persons if person.name
@@ -297,11 +316,26 @@ class Pipeline:
                     )
                 ]
 
+        # Папку с разными видами документов называть «Документами» стоит лишь
+        # тогда, когда у них есть общее — человек, организация или номер дела.
+        # Иначе слово «Документы» ничего не сообщает, и переименовывать не за
+        # чем (раздел 92 ТЗ).
+        if analysis.document_type is None and (
+            analysis.main_persons or analysis.main_organizations or analysis.case_numbers
+        ):
+            analysis.document_type = Field(
+                value=MIXED_FOLDER_LABEL,
+                source=Source.METADATA,
+                evidence=f"разные виды документов в {len(inside)} файлах",
+                confidence=0.7,
+            )
+            analysis.metadata["mixed_folder"] = True
+
         period = _folder_period(inside)
         if period:
             analysis.metadata["period"] = _period_for_name(period, self.config)
 
-        analysis.overall_confidence = compute_confidence(analysis)
+        analysis.overall_confidence = _folder_confidence(analysis, len(inside))
         name, _dropped = build_filename(analysis, self.config)
         analysis.proposed_filename = (
             name if name and name != folder.name else ""
@@ -389,6 +423,13 @@ class Pipeline:
                 if analysis is None:
                     continue
                 analysis.metadata["scan_page"] = page.to_dict()
+                if (
+                    analysis.document_date is not None
+                    and analysis.document_date.source is Source.FILESYSTEM
+                ):
+                    # У всех страниц оно одинаковое и говорит лишь о том, когда
+                    # файлы скопировали: в имени это шум.
+                    analysis.document_date = None
                 if analysis.category is Category.IMAGE:
                     # Пометка «фото» уместна только для снимка: у PDF и без неё
                     # понятно, что это скан.
@@ -1272,6 +1313,31 @@ def _table_period(text: str) -> str:
     return first[:4] if first[:4] == last[:4] else f"{first[:4]}-{last[:4]}"
 
 
+def _folder_confidence(analysis: FileAnalysis, files_inside: int) -> float:
+    """Насколько уверенно названа папка.
+
+    У папки нет ни своей даты, ни своего текста, поэтому общая формула для
+    документов ей не подходит: она занижает уверенность до порога, и папка с
+    понятным содержимым остаётся без предложения. Считается по тому, что о
+    папке действительно известно: общий участник, номер дела, преобладающий
+    вид документов.
+    """
+    score = 0.35
+    if analysis.document_type is not None and analysis.document_type.accepted:
+        score += 0.3 if not analysis.metadata.get("mixed_folder") else 0.1
+    if analysis.main_persons:
+        score += 0.3 * analysis.main_persons[0].confidence
+    elif analysis.main_organizations:
+        score += 0.25 * analysis.main_organizations[0].confidence
+    if analysis.case_numbers:
+        score += 0.2
+    if analysis.metadata.get("period"):
+        score += 0.05
+    if files_inside >= 3:
+        score += 0.05
+    return round(min(0.97, score), 4)
+
+
 def _strip_words(text: str, remove: str) -> str:
     """Убрать из текста слова, уже сказанные другим сегментом имени."""
     drop = {word.casefold() for word in re.split(r"[\s_]+", remove) if word}
@@ -1362,8 +1428,14 @@ def compute_confidence(analysis: FileAnalysis) -> float:
     предмета с учётом надёжности источника. Самооценка LLM отдельно не
     используется как единственный критерий.
     """
-    if analysis.category in (Category.IMAGE, Category.VIDEO, Category.AUDIO) and not (
-        analysis.subject is not None and analysis.subject.accepted
+    metadata = analysis.metadata or {}
+    # Снимок документа оценивается как документ: у него есть вид, участники и
+    # номер, и дата съёмки для имени уже не главное.
+    document_like = metadata.get("photo_of_document") or metadata.get("scan_page")
+    if (
+        analysis.category in (Category.IMAGE, Category.VIDEO, Category.AUDIO)
+        and not document_like
+        and not (analysis.subject is not None and analysis.subject.accepted)
     ):
         return media_confidence(analysis)
 
@@ -1414,7 +1486,8 @@ def compute_confidence(analysis: FileAnalysis) -> float:
         score *= 0.6
     if analysis.has_status(Status.PDF_TEXT_LAYER_LOW_QUALITY):
         score *= 0.9
-    if analysis.has_status(Status.DATE_SOURCE_FILESYSTEM):
+    if analysis.has_status(Status.DATE_SOURCE_FILESYSTEM) and analysis.document_date is not None:
+        # Штраф уместен, только пока такая дата действительно стоит в имени.
         score *= 0.85
     if analysis.has_status(Status.PARTIAL_SUPPORT_LEGACY_OFFICE):
         score *= 0.9

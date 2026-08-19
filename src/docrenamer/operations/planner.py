@@ -139,7 +139,7 @@ def build_folder_items(
     """
     taken = taken_by_directory if taken_by_directory is not None else {}
     items: list[PlanItem] = []
-    threshold = config.naming.confidence_threshold
+    threshold = config.naming.folder_confidence_threshold
 
     for analysis in folders:
         folder = analysis.source_path

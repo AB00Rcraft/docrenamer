@@ -216,3 +216,53 @@ def test_folder_renaming_can_be_disabled(
     plan = app.preview(workdir)
 
     assert not any(item.is_folder for item in plan.items)
+
+
+def test_folder_of_one_person_gets_name(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """Разные документы одного человека — это «Документы» этого человека.
+
+    Паспорт, иск и снимки Шахмановой не сводятся к одному виду документа, но
+    общее у них есть, и папке о нём сказать можно.
+    """
+    folder = workdir / "новая папка"
+    folder.mkdir()
+    (folder / "иск.txt").write_bytes(
+        (
+            "ИСКОВОЕ ЗАЯВЛЕНИЕ\nо взыскании задолженности\n"
+            "Истец: Шахманова Мария Петровна\nДело № 2-1183/2026\n"
+            "12 мая 2026 года заключён договор займа.\n"
+        ).encode()
+    )
+    (folder / "расписка.txt").write_bytes(
+        (
+            "РАСПИСКА\nЯ, Шахманова Мария Петровна, получила денежные средства\n"
+            "18 марта 2026 года в размере 150 000 рублей.\n"
+        ).encode()
+    )
+
+    app = Application(config, paths=app_paths)
+    plan = app.preview(workdir)
+    folder_item = next(item for item in plan.items if item.is_folder)
+
+    assert folder_item.is_rename, folder_item.message
+    assert "Шахманова" in folder_item.proposed_filename, folder_item.proposed_filename
+    assert folder_item.selected, folder_item.message
+
+
+def test_neutral_labels_do_not_name_a_folder(
+    config: Config, app_paths: AppPaths, workdir: Path
+) -> None:
+    """«Документ» и «Фото» — не вид документа, и папку так называть не за чем."""
+    folder = workdir / "разное 2"
+    folder.mkdir()
+    for index in range(1, 4):
+        (folder / f"файл{index}.txt").write_bytes(f"Просто текст номер {index}".encode())
+
+    app = Application(config, paths=app_paths)
+    plan = app.preview(workdir)
+    folder_item = next(item for item in plan.items if item.is_folder)
+
+    assert not folder_item.selected
+    assert "Документ" not in folder_item.proposed_filename or not folder_item.is_rename
