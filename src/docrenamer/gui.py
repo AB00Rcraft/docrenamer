@@ -299,6 +299,10 @@ class CenterProgress:
     def _draw(self) -> None:
         self.canvas.delete("all")
         width = self.canvas.winfo_width()
+        if width <= 1:
+            # Пока окно не показано, действительная ширина не известна:
+            # рисуем по запрошенной, иначе первый ход работы не виден.
+            width = self.canvas.winfo_reqwidth()
         if width <= 1 or self.fraction <= 0:
             return
         middle = width / 2
@@ -378,9 +382,9 @@ class MergeDialog:
         for item in items:
             self.listbox.insert("end", self._label(item, show_folder=len(folders) > 1))
 
-        chosen = set(preselected or [])
+        chosen = {item.source_path for item in preselected or []}
         for index, item in enumerate(items):
-            if item in chosen:
+            if item.source_path in chosen:
                 self.listbox.selection_set(index)
         if not chosen:
             self.listbox.selection_set(0, "end")

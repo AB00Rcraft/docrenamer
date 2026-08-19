@@ -222,8 +222,13 @@ def test_progress_draws_from_the_middle(gui) -> None:  # type: ignore[no-untyped
 
     assert drawn, "полоса не нарисована"
     left, _top, right, _bottom = gui.progress.canvas.coords(drawn[0])
-    middle = gui.progress.canvas.winfo_width() / 2
-    assert abs((middle - left) - (right - middle)) < 1.0
+    # Пока окно не показано, действительная ширина не известна: и полоса, и
+    # проверка считают по запрошенной, иначе сравнивать нечего с чем.
+    width = gui.progress.canvas.winfo_width()
+    if width <= 1:
+        width = gui.progress.canvas.winfo_reqwidth()
+    assert abs((left + right) / 2 - width / 2) < 1.0, (left, right, width)
+    assert abs((right - left) - width * 0.5) < 1.0, (left, right, width)
 
     gui.progress.clear()
     assert not gui.progress.canvas.find_all()

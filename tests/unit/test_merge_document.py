@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from docrenamer.operations.planner import RenamePlan, merge_as_document
 from docrenamer.types import PlanItem, Status
 
@@ -84,3 +86,16 @@ def test_pages_from_different_folders_refused(workdir: Path) -> None:
 
     assert not accepted
     assert "одной папке" in message
+
+
+def test_plan_item_is_not_hashable(workdir: Path) -> None:
+    """Строка плана изменяемая: складывать её в множество нельзя.
+
+    Проверка стоит здесь намеренно: окно объединения когда-то так и делало,
+    и падало ровно в момент, когда файлы были заранее отмечены.
+    """
+    path = workdir / "скан.jpg"
+    path.write_bytes(b"\xff\xd8\xff\xe0")
+
+    with pytest.raises(TypeError):
+        {make_item(path)}
