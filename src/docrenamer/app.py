@@ -25,11 +25,12 @@ from docrenamer.operations.planner import (
     verify_plan_item,
 )
 from docrenamer.operations.rename import CriticalSafetyError, rename_directory, rename_file
+from docrenamer.operations.scrub import metadata_left, scrub_file
 from docrenamer.operations.undo import UndoReport, undo_session
 from docrenamer.paths import AppPaths, default_paths, new_session_id
 from docrenamer.scanner import Scanner, ScanStats
 from docrenamer.security.temp_cleanup import SessionTemp, cleanup_stale_sessions
-from docrenamer.types import FileAnalysis, ScannedFile, Status
+from docrenamer.types import FileAnalysis, PlanItem, ScannedFile, Status, utcstamp
 
 
 class Mode(StrEnum):
@@ -67,6 +68,27 @@ class ApplyReport:
             "Переименовано": self.renamed,
             "Пропущено": self.skipped,
             "Низкая уверенность": self.low_confidence,
+            "Ошибок": self.failed,
+        }
+
+
+@dataclass(slots=True)
+class ScrubReport:
+    """Итог очистки метаданных."""
+
+    total: int = 0
+    cleaned: int = 0
+    failed: int = 0
+    cancelled: bool = False
+    #: Исходные файлы заменены очищенными, а не сохранены копией.
+    replaced: bool = False
+    report_path: Path | None = None
+    results: list[dict[str, Any]] = field(default_factory=list)
+
+    def counters(self) -> dict[str, int]:
+        return {
+            "Всего файлов": self.total,
+            "Очищено": self.cleaned,
             "Ошибок": self.failed,
         }
 
@@ -343,6 +365,121 @@ class Application:
             [item for item in items if item.status != Status.SKIPPED_LOW_CONFIDENCE.value]
         )
         return report
+
+    def reanalyze(self, plan: RenamePlan, paths: list[Path]) -> list[PlanItem]:
+        """Разобрать отдельные файлы заново и обновить их строки в плане.
+
+        Пригождается, когда обстановка изменилась: поставили распознавание,
+        поправили справочник видов документов или просто хочется проверить
+        конкретный файл, не пересобирая весь план.
+        """
+        wanted = [path for path in paths if path.is_file()]
+        if not wanted:
+            return []
+        scanned: list[ScannedFile] = []
+        for path in wanted:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            scanned.append(
+                ScannedFile(
+                    path=path,
+                    size=stat.st_size,
+                    mtime=stat.st_mtime,
+                    extension=path.suffix.lower(),
+                )
+            )
+        analyses = self.analyze(scanned)
+        fresh = build_plan(
+            analyses, config=self.config, root=plan.root, app_version=__version__
+        ).items
+        by_source = {item.source_path: item for item in fresh}
+
+        updated: list[PlanItem] = []
+        for index, item in enumerate(plan.items):
+            replacement = by_source.get(item.source_path)
+            if replacement is None:
+                continue
+            # Имя, уже занятое другой строкой плана, брать нельзя.
+            taken = {
+                other.target_path.name.casefold()
+                for position, other in enumerate(plan.items)
+                if position != index and other.target_path.parent == item.source_path.parent
+            }
+            if replacement.target_path.name.casefold() in taken:
+                replacement.selected = False
+                replacement.status = Status.NAME_COLLISION_RESOLVED.value
+                replacement.message = "Такое имя уже занято другой строкой плана."
+            plan.items[index] = replacement
+            updated.append(replacement)
+        return updated
+
+    def scrub(
+        self,
+        paths: list[Path],
+        *,
+        replace: bool = False,
+        output_dir: Path | None = None,
+    ) -> ScrubReport:
+        """Снять метаданные с указанных файлов (отдельная явная операция).
+
+        Переименование содержимое файлов не трогает — это основное правило
+        программы. Очистка метаданных его сознательно нарушает, поэтому она
+        вызывается только по прямой команде человека, по умолчанию создаёт
+        очищенные копии и записывает подробный отчёт в ``logs``.
+        """
+        report = ScrubReport(total=len(paths), replaced=replace)
+        for index, path in enumerate(paths, start=1):
+            if self.cancel_event.is_set():
+                report.cancelled = True
+                break
+            self.progress(index, len(paths), "SCRUB")
+            outcome = scrub_file(path, replace=replace, output_dir=output_dir)
+            left = metadata_left(outcome.target_path) if outcome.ok and outcome.target_path else []
+            if outcome.ok:
+                report.cleaned += 1
+                self.log_line(
+                    f"{path.name}: удалено — {', '.join(outcome.removed) or 'ничего не найдено'}"
+                    + (f"; осталось: {', '.join(left)}" if left else "")
+                )
+            else:
+                report.failed += 1
+                self.log_line(f"{path.name}: {outcome.message}")
+            report.results.append(
+                {
+                    "source": str(path),
+                    "target": str(outcome.target_path) if outcome.target_path else "",
+                    "ok": outcome.ok,
+                    "status": outcome.status,
+                    "message": outcome.message,
+                    "removed": outcome.removed,
+                    "warnings": outcome.warnings,
+                    "metadata_left": left,
+                    "size_before": outcome.size_before,
+                    "size_after": outcome.size_after,
+                    "replaced": outcome.replaced,
+                }
+            )
+        report.report_path = self._write_scrub_report(report)
+        return report
+
+    def _write_scrub_report(self, report: ScrubReport) -> Path:
+        """Записать отчёт об очистке: операция необратима, след нужен."""
+        self.paths.ensure_service_dirs()
+        target = self.paths.logs_dir / f"scrub-{self.session_id}.json"
+        write_json_atomic(
+            target,
+            {
+                "session_id": self.session_id,
+                "app_version": __version__,
+                "timestamp": utcstamp(),
+                "replaced_originals": report.replaced,
+                "counters": report.counters(),
+                "results": report.results,
+            },
+        )
+        return target
 
     def forensic(self, directory: Path, *, output_dir: Path | None = None) -> dict[str, Path]:
         """Режим FORENSIC: только отчёты, без изменений (раздел 8 ТЗ)."""

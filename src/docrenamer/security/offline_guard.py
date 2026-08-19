@@ -62,6 +62,11 @@ FORBIDDEN_URL_MARKERS: tuple[str, ...] = (
 #: это описание запрета, а не сетевое обращение.
 SELF_MODULE_NAME = "offline_guard.py"
 
+#: Пространства имён XML выглядят как адреса, но адресами не являются: это
+#: опознавательные строки формата, по ним никто никуда не ходит. Без такого
+#: разбора нельзя было бы собрать даже пустые свойства документа Office.
+XML_NAMESPACE_MARKERS: tuple[str, ...] = ("xmlns", "<?xml")
+
 
 @dataclass(frozen=True, slots=True)
 class Finding:
@@ -121,6 +126,8 @@ def audit_source(root: Path, *, allow_socket: bool = False) -> list[Finding]:
                 and file_path.name != SELF_MODULE_NAME
             ):
                 value = node.value
+                if any(marker in value for marker in XML_NAMESPACE_MARKERS):
+                    continue
                 if any(marker in value for marker in FORBIDDEN_URL_MARKERS):
                     # Документация в докстрингах допустима: проверяем, что это
                     # не исполняемая строка-адрес.

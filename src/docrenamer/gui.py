@@ -30,6 +30,7 @@ from docrenamer.operations.planner import (
     merge_as_document,
     set_manual_name,
 )
+from docrenamer.operations.scrub import can_scrub
 from docrenamer.paths import AppPaths, default_paths
 from docrenamer.presentation import (
     plan_row_label,
@@ -132,6 +133,11 @@ TOOLTIPS: dict[str, str] = {
     "merge": "Считать выбранные файлы страницами одного документа.\n"
              "Отметьте их мышью с Ctrl или Shift — или выберите папку целиком.\n"
              "Программа даст им общее имя с номерами страниц.",
+    "more": "Служебное: самопроверка, журнал работы, отчёт об именах,\n"
+            "настройки и проверка обновлений.",
+    "scrub": "Снять с выбранных файлов метаданные: EXIF и GPS у снимков,\n"
+             "автора и историю правок у документов Office, свойства у PDF.\n"
+             "По умолчанию рядом создаются очищенные копии.",
     "feedback": "Показать обезличенный отчёт о работе алгоритма имён\n"
                 "и, если согласитесь, открыть страницу его отправки.\n"
                 "Имён файлов, фамилий и текста документов в отчёте нет.",
@@ -146,7 +152,10 @@ TOOLTIPS: dict[str, str] = {
     "table": "Дерево файлов и папок: сначала корень, ниже — вложенные папки.\n"
              "Щелчок по галочке включает или исключает строку; галочка на папке\n"
              "распространяется на всё её содержимое.\n"
-             "Двойной щелчок по имени — правка вручную, пробел — отметка.",
+             "Двойной щелчок по имени — правка вручную, пробел — отметка.\n"
+             "Правая кнопка мыши открывает действия над файлом: изменить имя,\n"
+             "пересканировать, считать одним документом, очистить метаданные.\n"
+             "Несколько строк выбираются мышью с Shift или Ctrl.",
     "select_all": "Отметить все файлы, для которых есть предложение.\n"
                   "Повторное нажатие снимает отметки.",
     "details": "Полные имена выбранного файла, причина решения и метаданные:\n"
@@ -548,6 +557,20 @@ class DocRenamerGUI:
         horizontal.grid(row=1, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
 
+        # Меню строки: всё, что делается с конкретным файлом.
+        self.row_menu = tk.Menu(self.tree, tearoff=0)
+        self.row_menu.add_command(label="Изменить имя…   F2", command=self._edit_selected_name)
+        self.row_menu.add_command(label="Пересканировать   F5", command=self._rescan_selected)
+        self.row_menu.add_separator()
+        self.row_menu.add_command(label="Считать одним документом…", command=self._merge_selected)
+        self.row_menu.add_command(label="Очистить метаданные…", command=self._scrub_selected)
+        self.row_menu.add_separator()
+        self.row_menu.add_command(
+            label="Отметить или снять   Пробел", command=self._toggle_selected
+        )
+        self.tree.bind("<Button-3>", self._show_row_menu)
+        self.tree.bind("<F5>", lambda _event: self._rescan_selected())
+
         self.tree.bind("<space>", self._toggle_selected)
         self.tree.bind("<Double-1>", self._on_double_click)
         self.tree.bind("<F2>", lambda _event: self._edit_selected_name())
@@ -689,24 +712,21 @@ class DocRenamerGUI:
         self.stop_button.grid(row=0, column=4, sticky="w", padx=(PAD_M, 0))
         Tooltip(self.stop_button, TOOLTIPS["stop"])
 
-        service = (
-            ("Изменить имя", self._edit_selected_name, "edit_name", 5),
-            ("Один документ", self._merge_selected, "merge", 6),
-            ("Самопроверка", self._selftest, "selftest", 7),
-            ("Журнал", self._open_logs, "logs", 8),
-            ("Улучшение", self._send_feedback, "feedback", 9),
-            ("Настройки", self._open_settings, "settings", 10),
-        )
-        for text, command, key, column in service:
-            button = ttk.Button(actions, text=text, width=BUTTON_WIDTH, command=command)
-            button.grid(row=0, column=column, sticky="e", padx=(PAD_M, 0))
-            Tooltip(button, TOOLTIPS[key])
+        # Всё, что относится к отдельным файлам, живёт в меню строки, а
+        # служебное — под одной кнопкой: в ряду остаётся только ход работы.
+        more = ttk.Menubutton(actions, text="Ещё", width=BUTTON_WIDTH)
+        menu = tk.Menu(more, tearoff=0)
+        menu.add_command(label="Самопроверка", command=self._selftest)
+        menu.add_command(label="Журнал работы", command=self._open_logs)
+        menu.add_command(label="Отчёт об именах", command=self._send_feedback)
+        menu.add_separator()
+        menu.add_command(label="Настройки", command=self._open_settings)
         if self.config.update.enabled:
-            updates = ttk.Button(
-                actions, text="Обновления", width=BUTTON_WIDTH, command=self._check_updates
-            )
-            updates.grid(row=0, column=11, sticky="e", padx=(PAD_M, 0))
-            Tooltip(updates, TOOLTIPS["updates"])
+            menu.add_command(label="Проверить обновления", command=self._check_updates)
+        more.configure(menu=menu)
+        more.grid(row=0, column=5, sticky="e", padx=(PAD_M, 0))
+        Tooltip(more, TOOLTIPS["more"])
+        self.more_menu = menu
 
     def _set_details(self, text: str) -> None:
         """Показать подробности выбранного файла."""
@@ -798,6 +818,8 @@ class DocRenamerGUI:
                     self._show_files(payload)
                 elif kind == "plan":
                     self._show_plan(payload)
+                elif kind == "rows":
+                    self._refresh_rows(list(payload))
                 elif kind == "plan_cleared":
                     self._clear_plan(str(payload))
                 elif kind == "done":
@@ -1319,8 +1341,15 @@ class DocRenamerGUI:
         self._log(reason)
 
     def _on_click(self, event: tk.Event) -> str | None:
-        """Щелчок по колонке с галочкой — сразу переключает строку."""
+        """Щелчок по колонке с галочкой — сразу переключает строку.
+
+        С Shift или Ctrl щелчок не перехватывается: тогда человек выделяет
+        несколько строк, а не отмечает одну.
+        """
         if self.plan is None:
+            return None
+        state = int(event.state) if str(event.state).isdigit() else 0
+        if state & 0x0001 or state & 0x0004:  # Shift или Ctrl
             return None
         if self.tree.identify_region(event.x, event.y) != "cell":
             return None
@@ -1394,6 +1423,116 @@ class DocRenamerGUI:
         self._log(message)
         for item in pages:
             self.learning.record_plan_item(item, event="merged")
+
+    def _show_row_menu(self, event: tk.Event) -> str | None:
+        """Показать меню для строки под указателем."""
+        row = self.tree.identify_row(event.y)
+        if not row:
+            return None
+        if row not in self.tree.selection():
+            self.tree.selection_set(row)
+        self.tree.focus(row)
+        try:
+            self.row_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.row_menu.grab_release()
+        return "break"
+
+    def _rescan_selected(self) -> str:
+        """Разобрать выбранные файлы заново.
+
+        Обстановка меняется: поставили распознавание, дополнили справочник
+        видов документов — и файл, который вчера не поддался, сегодня получит
+        имя. Пересобирать ради этого весь план не нужно.
+        """
+        if self.plan is None:
+            messagebox.showinfo("Пересканирование", "Сначала нажмите «Предпросмотр».")
+            return "break"
+        items = [item for item in self._selected_plan_items() if not item.is_folder]
+        if not items:
+            messagebox.showinfo("Пересканирование", "Выберите файл в списке.")
+            return "break"
+        paths = [item.source_path for item in items]
+        plan = self.plan
+
+        def work() -> None:
+            updated = self.app.reanalyze(plan, paths)
+            self.events.put(("rows", updated))
+            self.events.put(("done", f"Разобрано заново: {len(updated)}"))
+
+        self._run_async(work)
+        return "break"
+
+    def _scrub_selected(self) -> None:
+        """Снять метаданные с выбранных файлов.
+
+        Единственная операция программы, которая меняет сам файл, поэтому
+        человеку прямо сказано, что именно будет удалено, чего очистка не
+        делает и что замена исходных файлов необратима.
+        """
+        items = [item for item in self._selected_plan_items() if not item.is_folder]
+        if not items:
+            messagebox.showinfo(
+                "Очистка метаданных",
+                "Отметьте файлы, с которых нужно снять метаданные.\n"
+                "Несколько строк выбираются мышью с Ctrl или Shift.",
+            )
+            return
+        supported = [item for item in items if can_scrub(item.source_path)]
+        if not supported:
+            messagebox.showinfo(
+                "Очистка метаданных",
+                "Для выбранных форматов очистка не поддержана.\n"
+                "Поддерживаются JPEG, PNG, TIFF, WEBP, PDF, DOCX, XLSX, PPTX.",
+            )
+            return
+
+        skipped = len(items) - len(supported)
+        question = (
+            f"Будет очищено файлов: {len(supported)}."
+            + (f"\nПропущено (формат не поддержан): {skipped}." if skipped else "")
+            + "\n\nЧто снимается:\n"
+            "• у снимков — EXIF, GPS, модель камеры, миниатюра;\n"
+            "• у PDF — автор, программа, даты, XMP;\n"
+            "• у Office — автор, кем изменён, организация, время правки.\n\n"
+            "Чего очистка не делает:\n"
+            "• не меняет сам текст: подпись и фамилия внутри документа остаются;\n"
+            "• не убирает исправления и примечания Word — это содержимое;\n"
+            "• не отменяет копий файла, сохранённых в другом месте.\n\n"
+            "Очищенные копии будут сложены в подпапку «Без метаданных».\n"
+            "Заменить вместо этого исходные файлы?\n"
+            "«Нет» — сохранить копии, исходные не трогать."
+        )
+        answer = messagebox.askyesnocancel("Очистка метаданных", question)
+        if answer is None:
+            return
+        replace = bool(answer)
+        if replace and not messagebox.askyesno(
+            "Замена исходных файлов",
+            "Исходные файлы будут заменены очищенными.\n"
+            "Вернуть удалённые метаданные будет нельзя — отмены у этой\n"
+            "операции нет.\n\nПродолжить?",
+        ):
+            return
+
+        paths = [item.source_path for item in supported]
+
+        def work() -> None:
+            report = self.app.scrub(paths, replace=replace)
+            self.events.put(("log", f"Отчёт об очистке: {report.report_path}"))
+            self.events.put(
+                (
+                    "done",
+                    f"Очистка: обработано {report.cleaned} из {report.total}"
+                    + (f", ошибок {report.failed}" if report.failed else ""),
+                )
+            )
+            if replace:
+                self.events.put(
+                    ("plan_cleared", "Файлы очищены — список обновите предпросмотром.")
+                )
+
+        self._run_async(work)
 
     def _selected_plan_items(self) -> list[PlanItem]:
         """Строки плана под выделением, включая содержимое выбранных папок."""

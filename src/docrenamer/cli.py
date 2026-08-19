@@ -53,6 +53,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--apply", action="store_true", help="выполнить переименование")
     parser.add_argument("--forensic", action="store_true", help="только отчёты, без изменений")
     parser.add_argument("--undo", metavar="MANIFEST", help="откатить сессию по manifest")
+    parser.add_argument(
+        "--scrub",
+        action="store_true",
+        help="снять метаданные с файлов каталога (копии в подпапку «Без метаданных»)",
+    )
+    parser.add_argument(
+        "--scrub-replace",
+        action="store_true",
+        help="при очистке заменять исходные файлы; вернуть метаданные будет нельзя",
+    )
     parser.add_argument("--config", metavar="PATH", help="путь к config.json")
     parser.add_argument("--no-ai", action="store_true", help="без локальной модели")
     parser.add_argument("--no-ocr", action="store_true", help="без распознавания текста")
@@ -266,6 +276,15 @@ def main(argv: list[str] | None = None) -> int:
         if directory is None or not directory.is_dir():
             print(f"Каталог не найден: {directory}", file=sys.stderr)
             return EXIT_ERROR
+
+        if args.scrub or args.scrub_replace:
+            files = [scanned.path for scanned in app.scan(directory)]
+            scrub_report = app.scrub(files, replace=args.scrub_replace)
+            for name, value in scrub_report.counters().items():
+                print(f"{name}: {value}")
+            if scrub_report.report_path:
+                print(f"Отчёт: {scrub_report.report_path}")
+            return EXIT_ERROR if scrub_report.failed else EXIT_OK
 
         if args.forensic or config.forensic_mode:
             outputs = app.forensic(directory)

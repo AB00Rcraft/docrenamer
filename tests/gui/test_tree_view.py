@@ -132,3 +132,31 @@ def test_preview_falls_back_to_text(gui, workdir: Path) -> None:  # type: ignore
     gui._show_preview(item)
 
     assert "ИСКОВОЕ" in gui.preview_text.get("1.0", "end")
+
+
+def test_row_menu_exists(gui) -> None:  # type: ignore[no-untyped-def]
+    """Действия над файлом живут в меню строки, а не в ряду кнопок."""
+    labels = [
+        gui.row_menu.entrycget(index, "label")
+        for index in range(gui.row_menu.index("end") + 1)
+        if gui.row_menu.type(index) == "command"
+    ]
+
+    assert any("Изменить имя" in label for label in labels), labels
+    assert any("Пересканировать" in label for label in labels), labels
+    assert any("одним документом" in label for label in labels), labels
+    assert any("метаданные" in label for label in labels), labels
+
+
+def test_shift_click_does_not_toggle(gui, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    """С Shift щелчок выделяет строки, а не переключает галочку."""
+    item = make_item(workdir / "договор.docx", "Договор.docx")
+    gui._show_plan(RenamePlan(root=workdir, items=[item]))
+
+    class FakeEvent:
+        x = 20
+        y = 10
+        state = 0x0001  # Shift
+
+    assert gui._on_click(FakeEvent()) is None
+    assert item.selected

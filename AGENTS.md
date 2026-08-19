@@ -4,7 +4,11 @@ This repository contains a safety-sensitive local file renaming tool.
 
 ## NON-NEGOTIABLE RULES
 
-1. Never modify user file contents.
+1. Never modify user file contents. Единственное исключение —
+   `src/docrenamer/operations/scrub.py`: снятие метаданных по прямой команде
+   человека. Оно запускается отдельной операцией, по умолчанию создаёт копию,
+   замену исходного файла подтверждает человек, и каждый случай записывается в
+   отчёт `logs/scrub-*.json`. Никакой другой код права менять файл не имеет.
 2. Never overwrite an existing user file.
 3. Never delete a user file.
 4. Never move a user file to another directory in MVP.
@@ -27,9 +31,15 @@ This repository contains a safety-sensitive local file renaming tool.
 17. LLM не является источником фактов. Любое значение, попадающее в имя файла,
     обязано иметь проверяемый evidence (regex / metadata / text-span).
 18. `os.replace()` запрещён для пользовательских файлов. Допустим только для
-    собственных служебных файлов (manifest, config) при atomic write.
+    собственных служебных файлов (manifest, config) при atomic write и для
+    очистки метаданных (правило 1), где подмена файла — суть операции.
 19. Не добавлять зависимость, если задача разумно решается standard library.
 20. Любой subprocess вызывается только списком аргументов, `shell=False`, с timeout.
+
+24. Очистка метаданных ничего не обещает сверх сделанного. В интерфейсе
+    перечисляется и то, что снимается, и то, что остаётся: текст документа,
+    исправления Word, копии файла в других местах. Формулировок вида «никто
+    ничего не узнает» быть не должно.
 
 ## Обратная связь об именах — с чего начинать работу над именами
 
