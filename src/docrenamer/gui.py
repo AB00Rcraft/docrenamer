@@ -39,9 +39,9 @@ from docrenamer.presentation import (
     row_tag,
 )
 from docrenamer.preview import (
+    file_card,
     folder_preview,
     format_stamp,
-    metadata_summary,
     text_preview,
     thumbnail_png,
 )
@@ -85,7 +85,7 @@ FONT_MONO = (FONT_MONO_FAMILY, 10)
 #: Размеры элементов. Все кнопки одной ширины — ряд выглядит выверенным.
 BUTTON_WIDTH = 15
 ROW_HEIGHT = 26
-DETAILS_HEIGHT = 3
+DETAILS_HEIGHT = 8
 PROGRESS_HEIGHT = 6
 LEFT_MIN_WIDTH = 620
 RIGHT_MIN_WIDTH = 360
@@ -158,9 +158,10 @@ TOOLTIPS: dict[str, str] = {
              "Несколько строк выбираются мышью с Shift или Ctrl.",
     "select_all": "Отметить все файлы, для которых есть предложение.\n"
                   "Повторное нажатие снимает отметки.",
-    "details": "Полные имена выбранного файла, причина решения и метаданные:\n"
-               "размер, время изменения, контрольная сумма. При переименовании\n"
-               "они не меняются — программа сверяет их до и после.",
+    "details": "Сведения о выбранном файле: что распознано и на каком основании,\n"
+               "насколько программа уверена, размер, время изменения и контрольная\n"
+               "сумма. При переименовании они не меняются — программа сверяет их\n"
+               "до и после операции.",
     "log": "Ход работы: что найдено, что предложено, что переименовано.",
     # Настройки
     "set_recursive": "Обрабатывать вложенные папки.",
@@ -498,6 +499,8 @@ class DocRenamerGUI:
 
         left = ttk.Frame(workspace, width=LEFT_MIN_WIDTH)
         left.columnconfigure(0, weight=1)
+        # Карточка файла переехала под предпросмотр, поэтому список занимает
+        # всю высоту левой колонки.
         left.rowconfigure(1, weight=1)
         workspace.add(left, weight=3)
 
@@ -579,32 +582,13 @@ class DocRenamerGUI:
         self.tree.bind("<<TreeviewSelect>>", self._show_details)
         Tooltip(self.tree, TOOLTIPS["table"])
 
-        # Подробности выбранной строки: длинные имена показываются целиком,
-        # с переносом, а не обрезаются шириной колонки.
-        details = ttk.Frame(left, style="Card.TFrame", padding=PAD_M)
-        details.grid(row=2, column=0, sticky="ew", pady=(PAD_M, 0))
-        details.columnconfigure(0, weight=1)
-        self.details = tk.Text(
-            details,
-            height=DETAILS_HEIGHT,
-            wrap="word",
-            bg=COLORS["panel"],
-            fg=COLORS["text"],
-            font=FONT_MONO,
-            relief="flat",
-            highlightthickness=0,
-            state="disabled",
-        )
-        self.details.grid(row=0, column=0, sticky="ew")
-        Tooltip(self.details, TOOLTIPS["details"])
-        self._set_details("Выберите файл в списке, чтобы увидеть подробности.")
-
         right = ttk.Frame(workspace, width=RIGHT_MIN_WIDTH)
         right.columnconfigure(0, weight=1)
-        # Предпросмотр занимает верх правой колонки, журнал — низ: содержимое
-        # файла важнее хода работы, по нему и видно, верно ли имя.
-        right.rowconfigure(1, weight=3)
-        right.rowconfigure(3, weight=2)
+        # Правая колонка читается сверху вниз: как файл выглядит, что о нём
+        # известно, и лишь затем ход работы.
+        right.rowconfigure(1, weight=4)
+        right.rowconfigure(3, weight=3)
+        right.rowconfigure(5, weight=2)
         workspace.add(right, weight=2)
 
         ttk.Label(right, text="ПРЕДПРОСМОТР ФАЙЛА", style="Section.TLabel").grid(
@@ -637,11 +621,38 @@ class DocRenamerGUI:
         Tooltip(self.preview_text, TOOLTIPS["preview_pane"])
         self._set_preview_text("Выберите файл в списке — здесь будет его содержимое.")
 
-        ttk.Label(right, text="ЖУРНАЛ РАБОТЫ", style="Section.TLabel").grid(
+        ttk.Label(right, text="СВЕДЕНИЯ О ФАЙЛЕ", style="Section.TLabel").grid(
             row=2, column=0, sticky="w", pady=(PAD_M, PAD_S)
         )
+        details = ttk.Frame(right, style="Card.TFrame", padding=PAD_S)
+        details.grid(row=3, column=0, sticky="nsew")
+        details.columnconfigure(0, weight=1)
+        details.rowconfigure(0, weight=1)
+        self.details = tk.Text(
+            details,
+            height=DETAILS_HEIGHT,
+            wrap="word",
+            bg=COLORS["panel"],
+            fg=COLORS["text"],
+            font=FONT_MONO,
+            relief="flat",
+            highlightthickness=0,
+            padx=PAD_S,
+            pady=PAD_S,
+            state="disabled",
+        )
+        self.details.grid(row=0, column=0, sticky="nsew")
+        details_scroll = ttk.Scrollbar(details, orient="vertical", command=self.details.yview)
+        details_scroll.grid(row=0, column=1, sticky="ns")
+        self.details.configure(yscrollcommand=details_scroll.set)
+        Tooltip(self.details, TOOLTIPS["details"])
+        self._set_details("Выберите файл в списке, чтобы увидеть сведения о нём.")
+
+        ttk.Label(right, text="ЖУРНАЛ РАБОТЫ", style="Section.TLabel").grid(
+            row=4, column=0, sticky="w", pady=(PAD_M, PAD_S)
+        )
         log_frame = ttk.Frame(right)
-        log_frame.grid(row=3, column=0, sticky="nsew")
+        log_frame.grid(row=5, column=0, sticky="nsew")
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
@@ -783,16 +794,7 @@ class DocRenamerGUI:
             self._set_details("Папка показана для наглядности — переименование не предложено.")
             self._set_preview_text(folder_preview(Path(selection[0].removeprefix("dir:"))))
             return
-        lines = [f"Сейчас:  {item.source_path.name}"]
-        if item.is_rename:
-            lines.append(f"Станет:  {item.proposed_filename}")
-        lines.append(
-            f"Уверенность: {item.confidence * 100:.0f}%    Состояние: {item.status}"
-        )
-        if item.message:
-            lines.append(item.message)
-        lines.append(metadata_summary(item))
-        self._set_details("\n".join(lines))
+        self._set_details(file_card(item, self.plan.root if self.plan else None))
         self._show_preview(item)
 
     # --- журнал и события --------------------------------------------------

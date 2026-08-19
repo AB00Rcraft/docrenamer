@@ -19,7 +19,7 @@ import io
 from datetime import datetime
 from pathlib import Path
 
-from docrenamer.types import Category, FileAnalysis, PlanItem
+from docrenamer.types import Category, FileAnalysis, PlanItem, Source
 
 #: Больше этого файл не открывается ради картинки: предпросмотр должен быть
 #: мгновенным, а не «подождите, читаю 300 мегабайт».
@@ -257,3 +257,101 @@ def metadata_summary(item: PlanItem) -> str:
         lines.append("Из файла: " + ", ".join(extra[:6]))
     lines.append("Переименование не меняет ни содержимое, ни время файла.")
     return "\n".join(line for line in lines if line)
+
+
+def file_card(item: PlanItem, root: Path | None = None) -> str:
+    """Сведения о выбранном файле — карточка под предпросмотром.
+
+    Здесь собрано всё, из чего сложилось предложенное имя: где файл лежит, что
+    программа в нём распознала и на каком основании, насколько уверена, а
+    также метаданные, которые переименование не тронет.
+    """
+    lines = [f"Сейчас:  {item.source_path.name}"]
+    if item.is_rename:
+        lines.append(f"Станет:  {item.proposed_filename}")
+    else:
+        lines.append("Станет:  имя остаётся прежним")
+    if root is not None:
+        try:
+            inside = item.source_path.parent.relative_to(root)
+            lines.append(f"Папка:   {inside if str(inside) != '.' else 'корень выбранной папки'}")
+        except ValueError:
+            lines.append(f"Папка:   {item.source_path.parent}")
+
+    analysis = item.analysis
+    if analysis is not None:
+        for label, value in _facts(analysis):
+            lines.append(f"{label:9}{value}")
+
+    lines.append(
+        f"Уверенность: {item.confidence * 100:.0f}%    Состояние: {item.status}"
+    )
+    if item.message:
+        lines.append(item.message)
+    lines.append(metadata_summary(item))
+    return "\n".join(line for line in lines if line)
+
+
+def _facts(analysis: FileAnalysis) -> list[tuple[str, str]]:
+    """Что распознано в файле и на каком основании (раздел 63 ТЗ)."""
+    facts: list[tuple[str, str]] = []
+    metadata = analysis.metadata or {}
+
+    document_type = analysis.document_type
+    if document_type is not None and document_type.accepted:
+        canonical = str(metadata.get("document_type_canonical") or document_type.value)
+        facts.append(("Вид:", f"{canonical}{_from(document_type.source)}"))
+
+    document_date = analysis.document_date
+    if document_date is not None and document_date.accepted:
+        # Дата показывается так же, как пишется в имени.
+        shown = _russian_date(str(document_date.value))
+        facts.append(("Дата:", f"{shown}{_from(document_date.source)}"))
+
+    number = analysis.document_number
+    number_value = str(number.value) if number is not None and number.accepted else ""
+    if number_value:
+        facts.append(("Номер:", number_value))
+    if analysis.case_numbers:
+        case = str(analysis.case_numbers[0].value)
+        # Номер документа и номер дела часто совпадают — повторять не за чем.
+        if case != number_value:
+            facts.append(("Дело:", case))
+    if analysis.main_persons:
+        facts.append(("Кто:", ", ".join(person.name for person in analysis.main_persons)))
+    if analysis.main_organizations:
+        facts.append(("Кем:", ", ".join(org.name for org in analysis.main_organizations)))
+
+    page = metadata.get("scan_page")
+    if isinstance(page, dict):
+        facts.append(("Страница:", f"{page.get('page')} из {page.get('total')}"))
+    series = metadata.get("series")
+    if isinstance(series, dict):
+        facts.append(("Часть:", str(series.get("segment", ""))))
+    review = metadata.get("name_review")
+    if isinstance(review, list) and review:
+        notes = "; ".join(str(issue.get("message", "")) for issue in review[:2])
+        facts.append(("Проверка:", notes))
+    return facts
+
+
+def _russian_date(value: str) -> str:
+    """ISO-дату показать в привычном виде: день, месяц, год."""
+    head = value[:10]
+    if len(head) == 10 and head[4] == "-" and head[7] == "-":
+        year, month, day = head.split("-")
+        return f"{day}.{month}.{year}" + value[10:]
+    return value
+
+
+def _from(source: Source) -> str:
+    """Откуда взято значение — по-русски и коротко."""
+    labels = {
+        Source.TEXT: " (из текста)",
+        Source.REGEX: " (из текста)",
+        Source.METADATA: " (из свойств файла)",
+        Source.FILENAME: " (из имени файла)",
+        Source.FILESYSTEM: " (время файла)",
+        Source.LLM: " (по разбору модели)",
+    }
+    return labels.get(source, "")

@@ -160,3 +160,27 @@ def test_shift_click_does_not_toggle(gui, workdir: Path) -> None:  # type: ignor
 
     assert gui._on_click(FakeEvent()) is None
     assert item.selected
+
+
+def test_card_sits_under_preview(gui, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    """Сведения о файле показываются под предпросмотром, в правой колонке."""
+    preview_row = gui.preview_text.master.grid_info()["row"]
+    details_row = gui.details.master.grid_info()["row"]
+
+    assert gui.preview_text.master.master is gui.details.master.master
+    assert int(details_row) > int(preview_row)
+
+
+def test_selecting_row_fills_card(gui, workdir: Path) -> None:  # type: ignore[no-untyped-def]
+    """При выборе строки карточка заполняется сведениями о файле."""
+    path = workdir / "скан.pdf"
+    path.write_bytes(b"%PDF-1.4\n")
+    item = make_item(path, "Иск_12.05.2026.pdf")
+    gui._show_plan(RenamePlan(root=workdir, items=[item]))
+    gui.tree.selection_set("0")
+
+    gui._show_details()
+
+    card = gui.details.get("1.0", "end")
+    assert "скан.pdf" in card
+    assert "Иск_12.05.2026.pdf" in card

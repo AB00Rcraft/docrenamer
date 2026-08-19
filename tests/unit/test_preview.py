@@ -107,3 +107,38 @@ def test_format_size() -> None:
     assert format_size(512) == "512 Б"
     assert format_size(2048) == "2 КБ"
     assert format_size(5 * 1024 * 1024) == "5.0 МБ"
+
+
+def test_file_card_shows_facts_and_sources(workdir: Path) -> None:
+    """Карточка объясняет, из чего сложилось имя, и откуда взят каждый факт."""
+    from docrenamer.preview import file_card
+    from docrenamer.types import EntityRef
+
+    item = make_item(workdir / "скан.pdf", text="ИСКОВОЕ ЗАЯВЛЕНИЕ")
+    assert item.analysis is not None
+    item.analysis.metadata["document_type_canonical"] = "Исковое заявление"
+    item.analysis.document_date = Field(
+        value="2026-05-12", source=Source.TEXT, evidence="12 мая 2026", confidence=0.95
+    )
+    item.analysis.main_persons = [EntityRef(name="Шахманова Мария Петровна", confidence=0.9)]
+    item.proposed_filename = "Иск_ШахмановаМП_12.05.2026.pdf"
+    item.target_path = workdir / item.proposed_filename
+
+    card = file_card(item, workdir)
+
+    assert "Сейчас:" in card and "скан.pdf" in card
+    assert "Станет:" in card and "Иск_ШахмановаМП" in card
+    assert "Исковое заявление (из текста)" in card
+    # Дата показывается по-русски, как и в имени.
+    assert "12.05.2026" in card
+    assert "Шахманова Мария Петровна" in card
+    assert "SHA-256" in card
+
+
+def test_file_card_says_when_name_stays(workdir: Path) -> None:
+    """Если имя не меняется, карточка так и говорит."""
+    from docrenamer.preview import file_card
+
+    item = make_item(workdir / "Договор_18.08.2026.pdf")
+
+    assert "остаётся прежним" in file_card(item, workdir)
