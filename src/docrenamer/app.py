@@ -15,6 +15,7 @@ from typing import Any
 from docrenamer import __version__
 from docrenamer.analysis import Analyzer, build_analyzer
 from docrenamer.config import Config, load_config, write_json_atomic
+from docrenamer.history import RenameHistory
 from docrenamer.learning import LearningLog
 from docrenamer.logging.manifest import ManifestWriter, new_manifest_path
 from docrenamer.logging.text_log import TextLog, new_log_path
@@ -45,6 +46,13 @@ class Mode(StrEnum):
 
 class Cancelled(RuntimeError):
     """Работа прервана пользователем (раздел 81 ТЗ)."""
+
+
+#: До скольких файлов журнал пишет строку о каждом.
+LOG_EVERY_FILE_LIMIT = 300
+
+#: Как часто сообщать о ходе работы на большой папке.
+LOG_EVERY_N_FILES = 250
 
 
 @dataclass(slots=True)
@@ -163,7 +171,13 @@ class Application:
             recursive=self.config.recursive if recursive is None else recursive,
             paths=self.paths,
         )
-        files = list(scanner.scan(Path(directory)))
+        files = []
+        for found in scanner.scan(Path(directory)):
+            files.append(found)
+            # На большой папке поиск сам по себе долгий: без вестей о нём
+            # окно выглядит застывшим.
+            if len(files) % 200 == 0:
+                self.progress(len(files), 0, "SCAN")
         self.last_scan_stats = scanner.stats
         self.last_folders = list(scanner.folders)
         self.log_line(f"Найдено файлов: {len(files)}")
@@ -180,13 +194,19 @@ class Application:
             self.progress(index, total, "ANALYZE")
             analysis = self.analyzer.analyze(scanned)
             results.append(analysis)
-            if analysis.proposed_filename:
-                label = (
-                    str(analysis.document_type.value)
-                    if analysis.document_type
-                    else analysis.detected_type
-                )
-                self.log_line(f"→ {label} | confidence {analysis.overall_confidence:.2f}")
+            # На тысячах файлов строка о каждом делает журнал бесполезным и
+            # тормозит окно: подробности пишутся только для небольших папок,
+            # для больших — краткие вести о ходе работы.
+            if total <= LOG_EVERY_FILE_LIMIT:
+                if analysis.proposed_filename:
+                    label = (
+                        str(analysis.document_type.value)
+                        if analysis.document_type
+                        else analysis.detected_type
+                    )
+                    self.log_line(f"→ {label} | confidence {analysis.overall_confidence:.2f}")
+            elif index % LOG_EVERY_N_FILES == 0 or index == total:
+                self.log_line(f"Разобрано: {index} из {total}")
 
         # Часть уточнений видна только по каталогу целиком: например, тома
         # одного документа.
@@ -211,6 +231,7 @@ class Application:
             root=Path(directory),
             app_version=__version__,
             progress=lambda done, total: self.progress(done, total, "PLAN"),
+            history=RenameHistory.load(self.paths.manifests_dir),
         )
         if self.config.naming.rename_folders and self.last_folders:
             folder_analyses = [

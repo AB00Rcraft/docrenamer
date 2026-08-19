@@ -134,6 +134,9 @@ class NamingConfig:
     #: номера дела в нескольких файлах — сильный довод. Переименование папки
     #: к тому же откатывается вместе с остальной сессией.
     folder_confidence_threshold: float = 0.72
+    #: Не предлагать заново то, что программа уже переименовывала: в рабочей
+    #: папке обычно нужны только новые файлы.
+    skip_already_renamed: bool = False
     separator: str = "_"
     allow_filesystem_date_fallback: bool = True
     preserve_good_names: bool = True
@@ -160,6 +163,10 @@ class NamingConfig:
         if "max_organizations_in_filename" in data:
             cfg.max_organizations_in_filename = _as_int(
                 data["max_organizations_in_filename"], "naming.max_organizations_in_filename", 0, 10
+            )
+        if "skip_already_renamed" in data:
+            cfg.skip_already_renamed = _as_bool(
+                data["skip_already_renamed"], "naming.skip_already_renamed"
             )
         if "folder_confidence_threshold" in data:
             name = "naming.folder_confidence_threshold"

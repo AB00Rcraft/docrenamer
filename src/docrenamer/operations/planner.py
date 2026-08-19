@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from docrenamer.config import Config, write_json_atomic
+from docrenamer.history import RenameHistory
 from docrenamer.naming.collision import fold, resolve_collision
 from docrenamer.naming.sanitizer import (
     normalize_extension,
@@ -200,6 +201,7 @@ def build_plan(
     root: Path,
     app_version: str = "",
     progress: Callable[[int, int], None] | None = None,
+    history: RenameHistory | None = None,
 ) -> RenamePlan:
     """Построить план по результатам анализа.
 
@@ -273,6 +275,14 @@ def build_plan(
 
         statuses = list(analysis.statuses)
         proposed = analysis.proposed_filename.strip()
+
+        renamed_on = ""
+        if history is not None:
+            renamed_on = history.renamed_on(source.name, digest)
+        if renamed_on and config.naming.skip_already_renamed:
+            # Человек попросил показывать только новое: разобранный прежде
+            # файл в план не попадает вовсе.
+            continue
         confidence = analysis.overall_confidence
         directory = source.parent
         taken = taken_by_directory.setdefault(directory, set())
@@ -290,6 +300,10 @@ def build_plan(
             selected=False,
             status=Status.SKIPPED.value,
         )
+
+        if renamed_on:
+            item.add_status(Status.ALREADY_RENAMED.value)
+            item.message = f"Уже переименован программой ({renamed_on})."
 
         duplicate_of = seen_hashes.get(digest)
         if duplicate_of is not None:
@@ -356,6 +370,10 @@ def build_plan(
                 f"Уверенность {confidence:.2f} ниже порога {threshold:.2f} — "
                 "автоматически не переименовывается."
             )
+        elif renamed_on:
+            # Имя этому файлу уже давала эта же программа: показываем, но не
+            # отмечаем — иначе повторный запуск гоняет папку по кругу.
+            item.status = Status.ALREADY_RENAMED.value
         else:
             item.status = Status.OK.value
             item.selected = True

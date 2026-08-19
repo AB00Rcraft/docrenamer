@@ -96,6 +96,15 @@ WINDOW_HEIGHT = 860
 WINDOW_MIN_WIDTH = 1000
 WINDOW_MIN_HEIGHT = 640
 
+#: Сколько событий рабочего потока разбирать за один заход.
+EVENTS_PER_TICK = 200
+
+#: Сколько строк журнала держать в окне: остальное есть в файле журнала.
+LOG_MAX_LINES = 800
+
+#: По сколько строк добавлять в список за раз.
+ROWS_PER_CHUNK = 300
+
 #: Наименьшая высота панелей правой колонки: предпросмотр, сведения, журнал.
 PREVIEW_MIN_HEIGHT = 220
 DETAILS_MIN_HEIGHT = 150
@@ -157,6 +166,9 @@ TOOLTIPS: dict[str, str] = {
             "Предпросмотр — показать предлагаемые имена.\n"
             "Применить — переименовать по плану.",
     "recursive": "Обрабатывать файлы и во вложенных папках.",
+    "only_new": "Не показывать файлы, которые программа уже переименовывала.\n"
+                "Узнаются по контрольной сумме и имени из прошлых операций,\n"
+                "поэтому повторный запуск не гоняет папку по кругу.",
     "table": "Дерево файлов и папок: сначала корень, ниже — вложенные папки.\n"
              "Щелчок по галочке включает или исключает строку; галочка на папке\n"
              "распространяется на всё её содержимое.\n"
@@ -867,6 +879,15 @@ class DocRenamerGUI:
         )
         recursive.grid(row=0, column=3, sticky="w")
         Tooltip(recursive, TOOLTIPS["recursive"])
+        self.only_new_var = tk.BooleanVar(value=self.config.naming.skip_already_renamed)
+        only_new = ttk.Checkbutton(
+            modes,
+            text="Только новые",
+            variable=self.only_new_var,
+            command=self._apply_only_new,
+        )
+        only_new.grid(row=0, column=4, sticky="w", padx=(PAD_L, 0))
+        Tooltip(only_new, TOOLTIPS["only_new"])
 
     def _build_workspace(self) -> None:
         """Две колонки: список файлов и журнал."""
@@ -1120,6 +1141,15 @@ class DocRenamerGUI:
         Tooltip(more, TOOLTIPS["more"])
         self.more_menu = menu
 
+    def _apply_only_new(self) -> None:
+        """Показывать ли файлы, которые программа уже переименовывала."""
+        self.config.naming.skip_already_renamed = bool(self.only_new_var.get())
+        self._log(
+            "Показываются только новые файлы."
+            if self.config.naming.skip_already_renamed
+            else "Показываются все файлы папки."
+        )
+
     def _set_details(self, text: str) -> None:
         """Показать подробности выбранного файла."""
         self.details.configure(state="normal")
@@ -1190,20 +1220,30 @@ class DocRenamerGUI:
     def _log(self, message: str) -> None:
         self.log.configure(state="normal")
         self.log.insert("end", message + "\n")
+        # Журнал на экране — не архив: полная запись всё равно ведётся в файл,
+        # а бесконечный текст в окне только замедляет работу.
+        lines = int(self.log.index("end-1c").split(".")[0])
+        if lines > LOG_MAX_LINES:
+            self.log.delete("1.0", f"{lines - LOG_MAX_LINES}.0")
         self.log.see("end")
         self.log.configure(state="disabled")
 
     def _drain_events(self) -> None:
-        """Перенести события рабочего потока в интерфейс (раздел 82 ТЗ)."""
+        """Перенести события рабочего потока в интерфейс (раздел 82 ТЗ).
+
+        За один заход берётся ограниченное число событий, а вести о ходе
+        работы схлопываются в последнюю: иначе на четырёх тысячах файлов окно
+        уходит в перерисовку и перестаёт откликаться.
+        """
+        latest_progress: tuple[int, int, str] | None = None
         try:
-            while True:
+            for _ in range(EVENTS_PER_TICK):
                 kind, payload = self.events.get_nowait()
+                if kind == "progress":
+                    latest_progress = payload
+                    continue
                 if kind == "log":
                     self._log(str(payload))
-                elif kind == "progress":
-                    done, total, stage = payload
-                    self.progress.set(done, total)
-                    self.status_var.set(progress_label(done, total, stage))
                 elif kind == "files":
                     self._show_files(payload)
                 elif kind == "plan":
@@ -1223,6 +1263,10 @@ class DocRenamerGUI:
                     messagebox.showerror("DocRenamer", str(payload))
         except queue.Empty:
             pass
+        if latest_progress is not None:
+            done, total, stage = latest_progress
+            self.progress.set(done, total)
+            self.status_var.set(progress_label(done, total, stage))
         self.root.after(80, self._drain_events)
 
     def _busy(self, busy: bool) -> None:
@@ -1602,22 +1646,30 @@ class DocRenamerGUI:
         self.tree.delete(*self.tree.get_children())
         self.tree.heading("confidence", text="Размер")
         root = self.directory or (files[0].path.parent if files else Path("."))
-        for index, scanned in enumerate(files):
-            size = scanned.size / 1024
-            parent = self._folder_node(scanned.path.parent, root)
-            self.tree.insert(
-                parent,
-                "end",
-                iid=str(index),
-                text=scanned.path.name,
-                values=(
-                    "",
-                    "—",
-                    f"{size:.0f} КБ" if size < 1024 else f"{size / 1024:.1f} МБ",
-                    "Найден",
-                ),
-                tags=("warn",),
-            )
+
+        def insert_chunk(start: int) -> None:
+            """Вставлять строки частями: окно остаётся живым и на тысячах файлов."""
+            for index in range(start, min(start + ROWS_PER_CHUNK, len(files))):
+                scanned = files[index]
+                size = scanned.size / 1024
+                parent = self._folder_node(scanned.path.parent, root)
+                self.tree.insert(
+                    parent,
+                    "end",
+                    iid=str(index),
+                    text=scanned.path.name,
+                    values=(
+                        "",
+                        "—",
+                        f"{size:.0f} КБ" if size < 1024 else f"{size / 1024:.1f} МБ",
+                        "Найден",
+                    ),
+                    tags=("warn",),
+                )
+            if start + ROWS_PER_CHUNK < len(files):
+                self.root.after(1, insert_chunk, start + ROWS_PER_CHUNK)
+
+        insert_chunk(0)
         self._set_details(
             f"Найдено файлов: {len(files)}.\n"
             "Нажмите «Предпросмотр», чтобы разобрать их и увидеть предлагаемые имена."

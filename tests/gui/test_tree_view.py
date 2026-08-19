@@ -316,3 +316,26 @@ def test_merge_dialog_labels_folders(gui, workdir: Path) -> None:  # type: ignor
         assert labels[1].endswith("2.jpg") and "Дело" in labels[1], labels
     finally:
         dialog.window.destroy()
+
+
+def test_only_new_switch(gui) -> None:  # type: ignore[no-untyped-def]
+    """Переключатель «Только новые» меняет настройку сразу."""
+    gui.only_new_var.set(True)
+    gui._apply_only_new()
+    assert gui.config.naming.skip_already_renamed
+
+    gui.only_new_var.set(False)
+    gui._apply_only_new()
+    assert not gui.config.naming.skip_already_renamed
+
+
+def test_log_does_not_grow_without_limit(gui) -> None:  # type: ignore[no-untyped-def]
+    """Журнал в окне ограничен: иначе тысячи строк замедляют работу."""
+    from docrenamer.gui import LOG_MAX_LINES
+
+    for number in range(LOG_MAX_LINES + 200):
+        gui._log(f"строка {number}")
+
+    lines = int(gui.log.index("end-1c").split(".")[0])
+    assert lines <= LOG_MAX_LINES + 1, lines
+    assert "строка 999" in gui.log.get("1.0", "end")

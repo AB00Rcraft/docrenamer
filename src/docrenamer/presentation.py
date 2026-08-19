@@ -82,6 +82,26 @@ def status_icon(status: str) -> str:
     return STATUS_ICONS.get(status, "·")
 
 
+#: Понятные названия этапов работы.
+STAGE_LABELS: dict[str, str] = {
+    "SCAN": "Поиск файлов",
+    "ANALYZE": "Разбор",
+    "PLAN": "Составление плана",
+    "APPLY": "Переименование",
+    "UNDO": "Возврат имён",
+    "SCRUB": "Очистка метаданных",
+}
+
+
 def progress_label(done: int, total: int, stage: str) -> str:
-    """Строка прогресса вида ``ANALYZE  38 / 184`` (раздел 80 ТЗ)."""
-    return f"{stage}  {done} / {total}" if stage else f"{done} / {total}"
+    """Строка хода работы: сделано, всего и сколько осталось.
+
+    На четырёх тысячах файлов важнее всего понимать, сколько ещё ждать,
+    поэтому остаток указывается прямо (раздел 80 ТЗ).
+    """
+    name = STAGE_LABELS.get(stage, stage)
+    if total <= 0:
+        return f"{name}: {done}" if name else str(done)
+    left = max(0, total - done)
+    body = f"{done} из {total}" + (f", осталось {left}" if left else " — готово")
+    return f"{name}: {body}" if name else body
